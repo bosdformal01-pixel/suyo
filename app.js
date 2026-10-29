@@ -1742,17 +1742,21 @@ $("#place-list").addEventListener("click", (e) => {
   if (c) selectPlace(c.dataset.place, true);
 });
 
-// 검색
+// 검색 (울산 지역만)
+const isUlsan = (r) => /^울산/.test(r.address_name || "") || /^울산/.test(r.road_address_name || "");
 $("#search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const q = $("#search-q").value.trim();
   const box = $("#search-results");
   if (!q) return;
   if (!placesSvc) { toast("지도가 준비되면 검색할 수 있어요"); return; }
-  placesSvc.keywordSearch(q, (data, status) => {
+  // 울산 지역 식당만: 검색어에 '울산'을 붙여 찾고, 주소가 울산인 곳만 보여줘요
+  const query = q.includes("울산") ? q : `울산 ${q}`;
+  placesSvc.keywordSearch(query, (raw, status) => {
     box.hidden = false;
-    if (status !== kakaoMaps.services.Status.OK || !data.length) {
-      box.innerHTML = '<div class="sr-item"><span class="muted">검색 결과가 없어요. 동네 이름을 같이 넣어 보세요.</span></div>';
+    const data = (status === kakaoMaps.services.Status.OK ? raw : []).filter(isUlsan);
+    if (!data.length) {
+      box.innerHTML = '<div class="sr-item"><span class="muted">울산에서 찾은 식당이 없어요. 동네 이름(예: 전하동, 일산동)을 같이 넣어 보세요.</span></div><div class="sr-item"><button class="btn ghost sm" data-closesr>닫기</button></div>';
       return;
     }
     box.innerHTML = data.slice(0, 8).map((r, i) => {
@@ -1774,6 +1778,7 @@ $("#search-results").addEventListener("click", async (e) => {
   const add = e.target.closest("[data-add]");
   if (!add) return;
   const r = box._data[Number(add.dataset.add)];
+  if (!r || !isUlsan(r)) { toast("울산 지역 식당만 추가할 수 있어요"); return; }
   add.disabled = true;
   try {
     await setDoc(doc(db, "places", r.id), {
