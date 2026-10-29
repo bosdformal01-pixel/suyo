@@ -97,7 +97,7 @@ const S = {
   messages: [],
   places: [], reviews: [],
   invites: [],
-  notices: [], allYes: [],
+  notices: [], allYes: [], routes: {},
   settle: null, paid: {},
   selected: null, myStars: 0,
   tab: "home",
@@ -373,7 +373,14 @@ function startApp() {
 
   unsubs.push(onSnapshot(collection(db, "places"), (qs) => {
     S.places = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
-    renderPlaces(); renderPlaceOptions();
+    renderPlaces(); renderPlaceOptions(); renderHome();
+  }));
+
+  unsubs.push(onSnapshot(collection(db, "routes"), (qs) => {
+    S.routes = {};
+    qs.forEach((d) => (S.routes[d.id] = d.data()));
+    renderHome();
+    if (S.selected) renderDetail();
   }));
 
   unsubs.push(onSnapshot(collection(db, "reviews"), (qs) => {
@@ -626,6 +633,13 @@ function renderHome() {
     ${ev?.note ? `<dt>메모</dt><dd>${esc(ev.note)}</dd>` : ""}
     ${sameDay.length ? `<dt>일정</dt><dd>${sameDay.map((s) => esc(s.title)).join(", ")}</dd>` : ""}
     ${updated}`;
+
+  // 가는 법 (학교 → 장소)
+  const planBox = $("#plan-route");
+  const planPlace = ev?.place ? findPlaceByName(ev.place) : null;
+  if (planPlace) { planBox.hidden = false; planBox.innerHTML = routeHtml(planPlace); ensureBus(planPlace); }
+  else if (ev?.place) { planBox.hidden = false; planBox.innerHTML = '<div class="route-body sub">맛집 목록에 있는 식당으로 장소를 정하면 학교에서 가는 법(버스·택시)이 나와요.</div>'; }
+  else planBox.hidden = true;
 
   // 참석
   const mine = S.attendance.find((a) => a.uid === S.uid)?.status;
@@ -1315,6 +1329,113 @@ function renderPlaces() {
 }
 
 // ============================================================
+//  가는 법: 학교 → 장소
+//  버스: ODsay 대중교통 API (한 번 찾은 결과는 저장해서 모두 같이 씀)
+//  택시: 울산 택시 요금으로 추정 (거리 = 직선거리 × 1.35)
+// ============================================================
+const SCHOOL = CFG.school || { name: "학교", lat: CFG.mapCenter?.lat, lng: CFG.mapCenter?.lng };
+const TAXI = CFG.taxi || { base: 4500, baseMeters: 2000, perMeters: 125, perWon: 100, perSeconds: 30 };
+const busState = {}; // placeId -> "loading" | { error } (이번 접속 동안만)
+
+function findPlaceByName(name) {
+  const n = String(name || "").trim();
+  return S.places.find((p) => p.name.trim() === n) || null;
+}
+function haversine(a, b) {
+  const R = 6371000, toR = (x) => (x * Math.PI) / 180;
+  const dLat = toR(b.lat - a.lat), dLng = toR(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toR(a.lat)) * Math.cos(toR(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function taxiEstimate(p) {
+  const road = haversine(SCHOOL, p) * 1.35;
+  const minutes = Math.max(3, Math.round((road / 1000 / 24) * 60) + 2); // 시내 평균 시속 24km + 잡는 시간
+  const distFare = (Math.max(0, road - TAXI.baseMeters) / TAXI.perMeters) * TAXI.perWon;
+  const timeFare = ((minutes * 60 * 0.25) / TAXI.perSeconds) * TAXI.perWon; // 막히는 구간(약 25%)은 시간요금
+  const fare = TAXI.base + distFare + timeFare;
+  const r100 = (x) => Math.round(x / 100) * 100;
+  return { km: road / 1000, minutes, lo: Math.max(TAXI.base, r100(fare * 0.9)), hi: Math.max(TAXI.base, r100(fare * 1.15)) };
+}
+function kakaoRouteLink(p) {
+  return `https://map.kakao.com/link/from/${encodeURIComponent(SCHOOL.name)},${SCHOOL.lat},${SCHOOL.lng}/to/${encodeURIComponent(p.name)},${p.lat},${p.lng}`;
+}
+
+async function ensureBus(p) {
+  if (!CFG.odsayKey || S.routes[p.id]?.from === SCHOOL.name || busState[p.id]) return;
+  busState[p.id] = "loading";
+  try {
+    const url = `https://api.odsay.com/v1/api/searchPubTransPathT?SX=${SCHOOL.lng}&SY=${SCHOOL.lat}&EX=${p.lng}&EY=${p.lat}&OPT=0&SearchPathType=2&apiKey=${encodeURIComponent(CFG.odsayKey)}`;
+    const j = await (await fetch(url)).json();
+    const err = j.error && (Array.isArray(j.error) ? j.error[0] : j.error);
+    let data;
+    if (err) {
+      if (String(err.code) === "-98") data = { from: SCHOOL.name, near: true, bus: null };
+      else { busState[p.id] = { error: err.message || err.msg || "경로를 찾지 못했어요" }; rerenderRoutes(p.id); return; }
+    } else {
+      const path = (j.result?.path || [])[0];
+      if (!path) { busState[p.id] = { error: "버스 경로가 없어요" }; rerenderRoutes(p.id); return; }
+      const steps = path.subPath.map((sp) => {
+        if (sp.trafficType === 3) return sp.sectionTime > 0 ? { t: "walk", min: sp.sectionTime } : null;
+        if (sp.trafficType === 2) {
+          const st = sp.passStopList?.stations || [];
+          return {
+            t: "bus", nos: (sp.lane || []).map((l) => String(l.busNo)).slice(0, 4),
+            from: sp.startName || "", to: sp.endName || "", next: st[1]?.stationName || "",
+            count: sp.stationCount || 0, min: sp.sectionTime || 0,
+          };
+        }
+        return null;
+      }).filter(Boolean);
+      data = { from: SCHOOL.name, near: false, bus: { total: path.info.totalTime, pay: path.info.payment, steps } };
+    }
+    await setDoc(doc(db, "routes", p.id), { ...data, at: serverTimestamp() }).catch(() => {});
+    S.routes[p.id] = data;
+    delete busState[p.id];
+    rerenderRoutes(p.id);
+  } catch (e) {
+    console.error(e);
+    busState[p.id] = { error: "버스 정보를 불러오지 못했어요 (ODsay 키·등록 주소 확인)" };
+    rerenderRoutes(p.id);
+  }
+}
+function rerenderRoutes(placeId) {
+  renderHome();
+  if (S.selected === placeId) $("#pd-route-info").innerHTML = routeHtml(S.places.find((x) => x.id === placeId));
+}
+
+function routeHtml(p) {
+  if (!p || !SCHOOL.lat) return "";
+  const r = S.routes[p.id]?.from === SCHOOL.name ? S.routes[p.id] : null;
+  const st = busState[p.id];
+  const walkMin = Math.max(1, Math.round((haversine(SCHOOL, p) * 1.25) / 67));
+  let bus;
+  if (r?.near || (!r && walkMin <= 10)) {
+    bus = `<div class="route-row"><span class="route-tag walk">도보</span><div class="route-body"><div class="main">걸어서 약 ${walkMin}분</div><div class="sub">학교에서 가까워요</div></div></div>`;
+  } else if (r?.bus) {
+    const b = r.bus;
+    const steps = b.steps.map((s) => s.t === "walk"
+      ? `<li>걸어서 ${s.min}분</li>`
+      : `<li><b>${esc(s.from)}</b> 정류장${s.next ? ` (${esc(s.next)} 방면)` : ""}에서 ${s.nos.map((n) => `<span class="bus-no">${esc(n)}</span>`).join(" ")} 타기 → ${s.count}정거장, ${s.min}분 → <b>${esc(s.to)}</b> 하차</li>`).join("");
+    bus = `<div class="route-row"><span class="route-tag bus">버스</span><div class="route-body">
+        <div class="main">약 ${b.total}분 · ${won(b.pay)}</div>
+        <div class="sub">걷는 시간 포함, 기다리는 시간 제외 · 요금은 일반(성인) 기준</div>
+        <ol class="route-steps">${steps}</ol></div></div>`;
+  } else if (st === "loading") {
+    bus = '<div class="route-row"><span class="route-tag bus">버스</span><div class="route-body sub">버스 경로 찾는 중…</div></div>';
+  } else if (st?.error) {
+    bus = `<div class="route-row"><span class="route-tag bus">버스</span><div class="route-body sub">${esc(st.error)}</div></div>`;
+  } else {
+    bus = '<div class="route-row"><span class="route-tag bus">버스</span><div class="route-body sub">아래 카카오맵 길찾기에서 버스 경로를 볼 수 있어요.</div></div>';
+  }
+  const t = taxiEstimate(p);
+  const taxi = `<div class="route-row"><span class="route-tag taxi">택시</span><div class="route-body">
+      <div class="main">약 ${t.minutes}분 · ${won(t.lo)}~${won(t.hi)}</div>
+      <div class="sub">거리 약 ${t.km.toFixed(1)}km · 울산 택시요금 기준 추정 (밤 10시 이후 20% 할증)</div></div></div>`;
+  return `<div class="route-head">${esc(SCHOOL.name)}에서 가는 법</div>${bus}${taxi}
+    <a href="${kakaoRouteLink(p)}" target="_blank" rel="noopener">카카오맵 길찾기로 정확히 보기 ›</a>`;
+}
+
+// ============================================================
 //  오늘 뭐 먹지? (맛집 목록에서 뽑기)
 // ============================================================
 function pickPool() {
@@ -1476,6 +1597,8 @@ function renderDetail() {
   $("#pd-summary").innerHTML = count
     ? `<span class="big">${avg.toFixed(1)}</span>${starsHtml(avg)}<span class="muted small">${count}명 평가</span>`
     : '<span class="muted">아직 평점이 없어요. 첫 평점을 남겨 주세요!</span>';
+  $("#pd-route-info").innerHTML = routeHtml(p);
+  ensureBus(p);
   $("#pd-link").href = p.url || `https://map.kakao.com/link/search/${encodeURIComponent(p.name)}`;
   $("#pd-route").href = `https://map.kakao.com/link/to/${encodeURIComponent(p.name)},${p.lat},${p.lng}`;
   $("#pd-delete").hidden = !(p.addedBy === S.uid || isAdmin());

@@ -22,5 +22,15 @@ window.SUYO_CONFIG = {
   mapCenter: { lat: 35.5252135, lng: 129.4216283 },
 
   // 4) 모임 기본 시작 시간 (이번 주 계획에 처음 표시되는 시간)
-  defaultTime: "16:30"
+  defaultTime: "16:30",
+
+  // 5) 출발지 (학교 마치고 출발하는 곳) — 가는 법(버스·택시) 계산 기준
+  school: { name: "현대고등학교", lat: 35.5252135, lng: 129.4216283 },
+
+  // 6) ODsay LAB 대중교통 API 키 (버스 노선 안내용, lab.odsay.com 에서 무료 발급)
+  //    비워 두면 버스 정보 대신 택시 추정 요금과 카카오맵 길찾기 링크만 보여요.
+  odsayKey: "",
+
+  // 7) 택시 요금 (울산, 2025.3.10 인상분 기준) — 요금이 바뀌면 여기만 고치면 돼요
+  taxi: { base: 4500, baseMeters: 2000, perMeters: 125, perWon: 100, perSeconds: 30 }
 };

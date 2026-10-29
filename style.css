@@ -520,6 +520,21 @@ label { font-size: .85rem; font-weight: 600; }
 .pick-result.done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
 .pick-result .row { margin-top: 4px; justify-content: center; }
 
+/* ---------- 가는 법 (학교 → 장소) ---------- */
+.route { display: flex; flex-direction: column; gap: 8px; background: var(--surface-2); border-radius: 12px; padding: 12px; }
+.route-head { font-size: .75rem; font-weight: 700; color: var(--muted); letter-spacing: .03em; }
+.route-row { display: flex; gap: 10px; align-items: flex-start; }
+.route-tag { flex: none; font-size: .72rem; font-weight: 700; border-radius: 6px; padding: 2px 7px; margin-top: 2px; }
+.route-tag.bus { background: var(--yes-soft); color: var(--yes); }
+.route-tag.taxi { background: var(--maybe-soft); color: var(--maybe); }
+.route-tag.walk { background: var(--accent-soft); color: var(--accent); }
+.route-body { flex: 1; min-width: 0; font-size: .88rem; overflow-wrap: anywhere; }
+.route-body .main { font-weight: 700; font-variant-numeric: tabular-nums; }
+.route-body .sub { color: var(--muted); font-size: .8rem; }
+.route-steps { margin: 4px 0 0; padding-left: 18px; font-size: .84rem; display: flex; flex-direction: column; gap: 2px; }
+.bus-no { display: inline-block; background: var(--yes); color: var(--bg); border-radius: 5px; padding: 0 6px; font-weight: 700; font-size: .8rem; margin-right: 2px; }
+.route a { font-size: .82rem; font-weight: 600; }
+
 /* ---------- 토스트 ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);

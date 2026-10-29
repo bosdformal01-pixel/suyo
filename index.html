@@ -101,6 +101,7 @@
             <button class="btn ghost sm" id="plan-edit-btn" type="button">수정</button>
           </div>
           <dl id="plan-view" class="plan-list"></dl>
+          <div id="plan-route" class="route" hidden></div>
           <form id="plan-form" class="stack" hidden>
             <label for="plan-place">장소</label>
             <input id="plan-place" list="place-datalist" maxlength="60" placeholder="식당 이름 (맛집 목록에서 고를 수 있어요)">
@@ -256,6 +257,7 @@
             <button class="icon-btn" id="pd-close" aria-label="닫기">×</button>
           </div>
           <div id="pd-summary" class="pd-summary"></div>
+          <div id="pd-route-info" class="route"></div>
           <div class="row wrap">
             <a id="pd-link" class="btn ghost sm" target="_blank" rel="noopener">카카오맵에서 보기</a>
             <a id="pd-route" class="btn ghost sm" target="_blank" rel="noopener">길찾기</a>
