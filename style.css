@@ -601,6 +601,32 @@ label { font-size: .85rem; font-weight: 600; }
 .chat-form.locked textarea, .chat-form.locked .btn, .chat-form.locked .photo-btn { opacity: .45; pointer-events: none; }
 .ban-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .85rem; color: var(--no); font-weight: 600; }
 
+/* ---------- 멘션 / 읽음 / 콕 ---------- */
+.mention-box {
+  position: fixed; z-index: 27; left: 0; right: 0;
+  bottom: calc(var(--tabbar-h) + 62px + env(safe-area-inset-bottom));
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  background: var(--surface); border-top: 1px solid var(--line);
+  display: flex; gap: 6px; overflow-x: auto;
+}
+.mention-box button { flex: none; border: 1px solid var(--accent); color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 4px 12px; font-weight: 700; font-size: .82rem; cursor: pointer; }
+.mention { font-weight: 700; color: var(--accent); }
+.msg.me .mention { color: inherit; text-decoration: underline; }
+.msg.mention-me .bubble { box-shadow: 0 0 0 2px var(--star); }
+.badge.at { background: var(--star); color: #2a1d00; }
+.read-cnt { font-size: .66rem; color: var(--accent); font-weight: 700; border: 0; background: none; padding: 0 2px; cursor: pointer; flex: none; }
+.poke-btn { border: 1px solid var(--maybe); color: var(--maybe); background: var(--maybe-soft); border-radius: 99px; font-size: .72rem; font-weight: 700; padding: 1px 8px; cursor: pointer; }
+.poke-btn:disabled { opacity: .5; cursor: default; }
+.name-pill.poked { outline: 1px dashed var(--maybe); }
+
+/* ---------- 투표 옵션 / 리포트 ---------- */
+.poll-tag.opt { background: var(--surface-2); color: var(--muted); }
+.poll-tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.report-card { text-align: left; cursor: pointer; gap: 4px; border-color: var(--accent); }
+.report-line { font-weight: 700; font-size: .95rem; }
+.stat-grid.three { grid-template-columns: repeat(3, 1fr); }
+
 /* ---------- 토스트 ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);

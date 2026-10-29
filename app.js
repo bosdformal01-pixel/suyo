@@ -53,7 +53,7 @@ function parseKey(k) { const [y, m, d] = k.split("-").map(Number); return new Da
 function today0() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); }
 function nextWedFrom(d) { const x = new Date(d); x.setDate(x.getDate() + ((3 - x.getDay() + 7) % 7)); return x; }
 function wednesday(offsetWeeks = 0) { const d = nextWedFrom(today0()); d.setDate(d.getDate() + offsetWeeks * 7); return d; }
-function toDate(ts) { return ts?.toDate ? ts.toDate() : null; }
+function toDate(ts) { return ts instanceof Date ? ts : ts?.toDate ? ts.toDate() : null; }
 function hhmm(d) { return d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; }
 function dayLabel(d) { return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})`; }
 function ago(d) {
@@ -100,7 +100,7 @@ const S = {
   notices: [], allYes: [], routes: {},
   settle: null, paid: {},
   selected: null,
-  club: {}, fines: [], laws: [], bans: {},
+  club: {}, fines: [], laws: [], bans: {}, reads: {}, pokes: {}, myPoke: null, reportMonth: null,
   tab: "home",
   lastPw: null, // 방금 로그인할 때 쓴 비밀번호 (비밀번호 변경 창에서 다시 묻지 않으려고 메모리에만 보관)
 };
@@ -315,7 +315,7 @@ function stopApp() {
   Object.values(voteUnsubs).forEach((u) => u());
   for (const k of Object.keys(voteUnsubs)) delete voteUnsubs[k];
   stopInvites();
-  ["#pw-modal", "#settings", "#cal", "#history"].forEach((s) => ($(s).hidden = true));
+  ["#pw-modal", "#settings", "#cal", "#history", "#report", "#poke-modal", "#reads-modal"].forEach((s) => ($(s).hidden = true));
   $("#auth-pw").value = "";
   started = false;
   S.me = null; S.uid = null;
@@ -335,7 +335,8 @@ function startApp() {
       const keepPw = S.me?.mustChangePw === false ? { mustChangePw: false } : {};
       S.me = { ...S.members[S.uid], ...keepPw };
     }
-    renderMe(); renderHome(); renderMembers(); renderSettle(); renderNotices(); renderHistory(); renderLaws();
+    syncOfficerSubs();
+    renderMe(); renderHome(); renderMembers(); renderSettle(); renderNotices(); renderHistory(); renderLaws(); renderChat();
   }));
 
   subscribeWeek();
@@ -359,6 +360,11 @@ function startApp() {
   unsubs.push(onSnapshot(collection(db, "laws"), (qs) => {
     S.laws = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
     renderLaws();
+  }, (err) => console.error(err)));
+
+  unsubs.push(onSnapshot(doc(db, "pokes", S.uid), (d) => {
+    S.myPoke = d.exists() ? d.data(SNAP) : null;
+    showPokeIfNeeded();
   }, (err) => console.error(err)));
 
   unsubs.push(onSnapshot(collection(db, "bans"), (qs) => {
@@ -672,13 +678,25 @@ function renderHome() {
   const groups = { yes: [], maybe: [], no: [] };
   S.attendance.forEach((a) => groups[a.status]?.push(memberName(a.uid, a.name)));
   const answered = new Set(S.attendance.map((a) => a.uid));
-  const none = Object.entries(S.members).filter(([id]) => !answered.has(id)).map(([, m]) => m.name);
+  const noneIds = Object.keys(S.members).filter((id) => !answered.has(id));
+  const none = noneIds.map((id) => S.members[id].name);
   const row = (cls, label, arr) => `
     <div class="rsvp-row"><span class="lbl ${cls}">${label} ${arr.length}</span>
       <div class="names">${arr.length ? arr.map((n) => `<span class="name-pill">${esc(n)}</span>`).join("") : '<span class="muted small">-</span>'}</div>
     </div>`;
-  $("#rsvp-lists").innerHTML = row("yes", "참석", groups.yes) + row("maybe", "미정", groups.maybe) + row("no", "불참", groups.no) + row("none", "무응답", none);
+  const pokeRow = () => `
+    <div class="rsvp-row"><span class="lbl none">무응답 ${noneIds.length}</span>
+      <div class="names">${noneIds.length ? noneIds.map((id) => {
+        const poked = S.pokes[id]?.date === S.wedKey;
+        const btn = isOfficer() && id !== S.uid && S.weekOffset >= 0
+          ? ` <button class="poke-btn" type="button" data-poke="${id}" ${poked ? "disabled" : ""}>${poked ? "콕 보냄" : "콕"}</button>` : "";
+        return `<span class="name-pill ${poked ? "poked" : ""}">${esc(S.members[id].name)}${btn}</span>`;
+      }).join("") : '<span class="muted small">-</span>'}</div>
+    </div>`;
+  $("#rsvp-lists").innerHTML = row("yes", "참석", groups.yes) + row("maybe", "미정", groups.maybe) + row("no", "불참", groups.no) + pokeRow();
   $("#rsvp-summary").textContent = `멤버 ${Object.keys(S.members).length}명 중 ${S.attendance.length}명 응답`;
+
+  renderReportCard();
 
   // 다가오는 일정
   const tk = dateKey(today0());
@@ -688,7 +706,7 @@ function renderHome() {
     : `<div class="empty-note">예정된 일정이 없어요.${isOfficer() ? " 캘린더에서 날짜를 눌러 추가할 수 있어요." : ""}</div>`;
 
   // 진행 중 투표
-  const open = S.polls.filter((p) => !p.closed).slice(0, 4);
+  const open = S.polls.filter((p) => !isPollClosed(p)).slice(0, 4);
   $("#home-polls").innerHTML = open.length
     ? open.map((p) => {
         const voted = (S.votes[p.id] || []).some((v) => v.uid === S.uid);
@@ -860,7 +878,11 @@ function addOptionInput(value = "") {
   row.querySelector("button").addEventListener("click", () => row.remove());
   wrap.appendChild(row);
 }
+const pollDeadline = (p) => toDate(p.deadline);
+const isPollClosed = (p) => !!p.closed || (!!pollDeadline(p) && pollDeadline(p).getTime() <= Date.now());
+const voteChoices = (v) => (Array.isArray(v.choices) ? v.choices : Number.isInteger(v.choice) ? [v.choice] : []);
 function resetPollForm() {
+  $("#poll-multi").checked = false; $("#poll-anon").checked = false; $("#poll-deadline").value = "";
   $("#poll-q").value = "";
   $("#poll-options").innerHTML = "";
   addOptionInput(); addOptionInput();
@@ -880,16 +902,29 @@ $("#poll-form").addEventListener("submit", async (e) => {
   const question = $("#poll-q").value.trim();
   const options = [...new Set($$("#poll-options input").map((i) => i.value.trim()).filter(Boolean))];
   if (options.length < 2) { toast("선택지를 2개 이상 적어 주세요"); return; }
+  const dl = $("#poll-deadline").value ? new Date($("#poll-deadline").value) : null;
+  if (dl && dl.getTime() <= Date.now() + 60000) { toast("마감 시간은 지금보다 뒤로 정해 주세요"); return; }
+  const data = { question, options, createdBy: S.uid, createdByName: S.me.name, createdAt: serverTimestamp(), closed: false };
+  if ($("#poll-multi").checked) data.multi = true;
+  if ($("#poll-anon").checked) data.anon = true;
+  if (dl) data.deadline = dl;
   try {
-    await addDoc(collection(db, "polls"), {
-      question, options, createdBy: S.uid, createdByName: S.me.name, createdAt: serverTimestamp(), closed: false,
-    });
+    await addDoc(collection(db, "polls"), data);
     resetPollForm();
     $("#poll-create").open = false;
     toast("투표를 올렸어요");
   } catch (err) { toast(errMsg(err)); }
 });
 
+function deadlineText(p) {
+  const d = pollDeadline(p);
+  if (!d) return "";
+  const left = d.getTime() - Date.now();
+  if (left <= 0) return `${d.getMonth() + 1}/${d.getDate()} ${hhmm(d)} 마감됨`;
+  if (left < 3600000) return `${Math.ceil(left / 60000)}분 뒤 마감`;
+  if (left < 86400000) return `${Math.floor(left / 3600000)}시간 뒤 마감`;
+  return `${d.getMonth() + 1}/${d.getDate()} ${hhmm(d)} 마감`;
+}
 function renderPolls() {
   const list = $("#poll-list");
   if (!S.polls.length) {
@@ -899,36 +934,41 @@ function renderPolls() {
   list.innerHTML = S.polls.map((p) => {
     const votes = S.votes[p.id] || [];
     const total = votes.length;
-    const my = votes.find((v) => v.uid === S.uid)?.choice;
-    const counts = p.options.map((_, i) => votes.filter((v) => v.choice === i));
+    const closed = isPollClosed(p);
+    const my = voteChoices(votes.find((v) => v.uid === S.uid) || {});
+    const counts = p.options.map((_, i) => votes.filter((v) => voteChoices(v).includes(i)));
     const max = Math.max(0, ...counts.map((c) => c.length));
     const canManage = p.createdBy === S.uid || isAdmin();
     const opts = p.options.map((opt, i) => {
       const who = counts[i];
       const pct = total ? Math.round((who.length / total) * 100) : 0;
-      const win = p.closed && max > 0 && who.length === max;
-      return `<button class="poll-opt ${my === i ? "mine" : ""}" data-poll="${p.id}" data-choice="${i}" ${p.closed ? "disabled" : ""}>
+      const win = closed && max > 0 && who.length === max;
+      const mine = my.includes(i);
+      return `<button class="poll-opt ${mine ? "mine" : ""}" data-poll="${p.id}" data-choice="${i}" ${closed ? "disabled" : ""}>
           <span class="bar" style="width:${pct}%"></span>
-          <span class="top"><span>${win ? '<b class="win-tag">1위</b> ' : ""}${esc(opt)}${my === i ? " ✓" : ""}</span><span class="cnt">${who.length}표 · ${pct}%</span></span>
-          ${who.length ? `<span class="who">${who.map((v) => esc(memberName(v.uid, v.name))).join(", ")}</span>` : ""}
+          <span class="top"><span>${win ? '<b class="win-tag">1위</b> ' : ""}${esc(opt)}${mine ? " ✓" : ""}</span><span class="cnt">${who.length}표 · ${pct}%</span></span>
+          ${who.length && !p.anon ? `<span class="who">${who.map((v) => esc(memberName(v.uid, v.name))).join(", ")}</span>` : ""}
         </button>`;
     }).join("");
+    const tags = [p.multi ? "여러 개 선택" : "", p.anon ? "이름 숨김" : "", deadlineText(p)].filter(Boolean);
     return `<article class="card">
         <div class="card-head">
           <h3 class="poll-q">${esc(p.question)}</h3>
-          <span class="poll-tag ${p.closed ? "" : "live"}">${p.closed ? "마감" : "진행 중"}</span>
+          <span class="poll-tag ${closed ? "" : "live"}">${closed ? "마감" : "진행 중"}</span>
         </div>
+        ${tags.length ? `<div class="poll-tags" style="justify-content:flex-start">${tags.map((t) => `<span class="poll-tag opt">${esc(t)}</span>`).join("")}</div>` : ""}
         <div class="stack tight">${opts}</div>
         <div class="row wrap" style="justify-content:space-between">
           <span class="poll-meta">${esc(p.createdByName)} · ${ago(toDate(p.createdAt))} · ${total}명 참여</span>
           ${canManage ? `<span class="row">
-              <button class="btn ghost sm" data-close="${p.id}">${p.closed ? "다시 열기" : "마감하기"}</button>
+              ${pollDeadline(p) && pollDeadline(p).getTime() <= Date.now() ? "" : `<button class="btn ghost sm" data-close="${p.id}">${p.closed ? "다시 열기" : "마감하기"}</button>`}
               <button class="btn danger sm" data-delpoll="${p.id}">삭제</button>
             </span>` : ""}
         </div>
       </article>`;
   }).join("");
 }
+setInterval(() => { if (S.me && S.polls.some((p) => p.deadline && !p.closed)) { renderPolls(); renderHome(); } }, 60000);
 
 $("#poll-list").addEventListener("click", async (e) => {
   const opt = e.target.closest("[data-choice]");
@@ -937,9 +977,15 @@ $("#poll-list").addEventListener("click", async (e) => {
   try {
     if (opt) {
       const pid = opt.dataset.poll, choice = Number(opt.dataset.choice);
+      const p = S.polls.find((x) => x.id === pid);
+      if (!p || isPollClosed(p)) { toast("마감된 투표예요"); return; }
       const ref = doc(db, "polls", pid, "votes", S.uid);
-      const mine = (S.votes[pid] || []).find((v) => v.uid === S.uid)?.choice;
-      if (mine === choice) await deleteDoc(ref);
+      const mine = voteChoices((S.votes[pid] || []).find((v) => v.uid === S.uid) || {});
+      if (p.multi) {
+        const next = mine.includes(choice) ? mine.filter((c) => c !== choice) : [...mine, choice].sort((a, b) => a - b);
+        if (!next.length) await deleteDoc(ref);
+        else await setDoc(ref, { uid: S.uid, name: S.me.name, choices: next });
+      } else if (mine.length === 1 && mine[0] === choice) await deleteDoc(ref);
       else await setDoc(ref, { uid: S.uid, name: S.me.name, choice });
     } else if (cl) {
       const p = S.polls.find((x) => x.id === cl.dataset.close);
@@ -970,8 +1016,10 @@ function updateChatBadge() {
   const seen = Number(lsGet("suyo-chat-seen") || 0);
   const n = S.messages.filter((m) => m.uid !== S.uid && (toDate(m.createdAt)?.getTime() || 0) > seen).length;
   const b = $("#chat-badge");
+  const atMe = S.messages.some((m) => m.uid !== S.uid && Array.isArray(m.mentions) && m.mentions.includes(S.uid) && (toDate(m.createdAt)?.getTime() || 0) > seen);
   b.hidden = n === 0;
-  b.textContent = n > 99 ? "99+" : String(n);
+  b.classList.toggle("at", atMe);
+  b.textContent = atMe ? "@" : n > 99 ? "99+" : String(n);
 }
 function nearBottom() { return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
 function scrollChatBottom() { requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight)); }
@@ -982,7 +1030,7 @@ function renderChat() {
   let lastDay = "", lastUid = "";
   const fm = finesByMsg();
   $("#chat-list").innerHTML = S.messages.length
-    ? S.messages.map((m) => {
+    ? S.messages.map((m, idx) => {
         const d = toDate(m.createdAt) || new Date();
         const day = dateKey(d);
         let out = "";
@@ -990,11 +1038,13 @@ function renderChat() {
         const me = m.uid === S.uid;
         const canDel = me || isAdmin();
         const t = S.members[m.uid]?.title;
-        out += `<div class="msg ${me ? "me" : ""}" data-id="${m.id}">
+        const ments = Array.isArray(m.mentions) ? m.mentions : [];
+        const readInfo = isOfficer() && idx >= S.messages.length - 15 ? readersOf(m) : null;
+        out += `<div class="msg ${me ? "me" : ""} ${ments.includes(S.uid) ? "mention-me" : ""}" data-id="${m.id}">
             ${!me && lastUid !== m.uid ? `<span class="who">${esc(memberName(m.uid, m.name))}${t ? ` · ${esc(t)}` : ""}</span>` : ""}
             <div class="line">${m.img && SAFE_IMG.test(m.img.thumb || "")
                 ? `<div class="bubble photo"><img src="${esc(m.img.thumb)}" alt="사진" data-photo="${esc(m.id)}" loading="lazy">${m.text ? `<div class="cap">${esc(m.text)}</div>` : ""}</div>`
-                : `<div class="bubble">${esc(m.text)}</div>`}<span class="time">${hhmm(d)}</span>${fm[m.id] ? `<span class="fine-tag">벌금 ${won(fm[m.id])}</span>` : ""}
+                : `<div class="bubble">${mentionHtml(m.text, ments)}</div>`}<span class="time">${hhmm(d)}</span>${readInfo ? `<button class="read-cnt" type="button" data-reads="${esc(m.id)}">읽음 ${readInfo.read.length}</button>` : ""}${fm[m.id] ? `<span class="fine-tag">벌금 ${won(fm[m.id])}</span>` : ""}
               ${canDel || isOfficer() ? `<span class="acts" hidden>
                 ${isOfficer() ? `<button class="pin" data-pinmsg="${m.id}">공지로</button>` : ""}
                 ${canDel ? `<button class="del" data-delmsg="${m.id}">삭제</button>` : ""}
@@ -1006,11 +1056,15 @@ function renderChat() {
     : '<div class="empty-note" style="text-align:center;padding:40px 0">아직 대화가 없어요.<br>어디 갈지 먼저 얘기해 볼까요?</div>';
   updateChatBadge();
   if (stick) scrollChatBottom();
+  if (S.tab === "chat") markRead();
+  notifyMention();
 }
 
 $("#chat-list").addEventListener("click", async (e) => {
   const ph = e.target.closest("[data-photo]");
   if (ph) { openPhoto(ph.dataset.photo); return; }
+  const rd = e.target.closest("[data-reads]");
+  if (rd) { openReads(rd.dataset.reads); return; }
   const del = e.target.closest("[data-delmsg]");
   if (del) {
     const m = S.messages.find((x) => x.id === del.dataset.delmsg);
@@ -1445,7 +1499,11 @@ $("#chat-form").addEventListener("submit", async (e) => {
   if (banLeftMs() > 0) { toast("채팅 정지 중이에요"); return; }
   chatInput.value = ""; chatInput.style.height = "auto";
   try {
-    const ref = await addDoc(collection(db, "messages"), { uid: S.uid, name: S.me.name, text, createdAt: serverTimestamp() });
+    const msg = { uid: S.uid, name: S.me.name, text, createdAt: serverTimestamp() };
+    const ments = isOfficer() ? findMentions(text) : [];
+    if (ments.length) msg.mentions = ments;
+    $("#mention-box").hidden = true;
+    const ref = await addDoc(collection(db, "messages"), msg);
     scrollChatBottom();
     await recordFine(text, ref.id);
   } catch (err) { chatInput.value = text; toast(errMsg(err)); }
@@ -2083,3 +2141,207 @@ $("#law-delete").addEventListener("click", async (e) => {
   }
   try { await deleteDoc(doc(db, "laws", lawEditing)); toast("조항을 삭제했어요"); closeLawForm(); } catch (err) { toast(errMsg(err)); }
 });
+
+// ============================================================
+//  @멘션 — 회장·임원만 쓸 수 있어요 (@이름 → 그 사람 화면에 강조 + 알림)
+// ============================================================
+function findMentions(text) {
+  return Object.entries(S.members)
+    .filter(([, m]) => m.name && text.includes("@" + m.name))
+    .map(([uid]) => uid).slice(0, 20);
+}
+function mentionHtml(text, ments) {
+  let html = esc(text);
+  if (!ments.length) return html;
+  const names = ments.map((u) => S.members[u]?.name).filter(Boolean).sort((a, b) => b.length - a.length);
+  for (const n of names) html = html.split("@" + esc(n)).join(`<span class="mention">@${esc(n)}</span>`);
+  return html;
+}
+chatInput.addEventListener("input", () => {
+  const box = $("#mention-box");
+  if (!isOfficer()) { box.hidden = true; return; }
+  const before = chatInput.value.slice(0, chatInput.selectionStart);
+  const mm = before.match(/@([^\s@]*)$/);
+  if (!mm) { box.hidden = true; return; }
+  const q = mm[1];
+  const cands = Object.values(S.members).filter((m) => m.name && m.name.includes(q)).slice(0, 10);
+  if (!cands.length) { box.hidden = true; return; }
+  box.innerHTML = cands.map((m) => `<button type="button" data-mention="${esc(m.name)}">@${esc(m.name)}</button>`).join("");
+  box.hidden = false;
+});
+$("#mention-box").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-mention]");
+  if (!b) return;
+  const pos = chatInput.selectionStart;
+  const before = chatInput.value.slice(0, pos).replace(/@([^\s@]*)$/, "@" + b.dataset.mention + " ");
+  chatInput.value = before + chatInput.value.slice(pos);
+  chatInput.focus();
+  chatInput.setSelectionRange(before.length, before.length);
+  $("#mention-box").hidden = true;
+});
+const mentionToasted = new Set();
+function notifyMention() {
+  const seen = Number(lsGet("suyo-chat-seen") || 0);
+  const m = [...S.messages].reverse().find((x) => x.uid !== S.uid && Array.isArray(x.mentions) && x.mentions.includes(S.uid));
+  if (!m || mentionToasted.has(m.id)) return;
+  const t = toDate(m.createdAt)?.getTime() || 0;
+  mentionToasted.add(m.id);
+  if (t > seen && Date.now() - t < 10 * 60000 && S.tab !== "chat") toast(`${memberName(m.uid, m.name)}님이 회원님을 불렀어요 (대화방)`);
+}
+
+// ============================================================
+//  읽음 표시 — 각자 대화방을 본 시각을 기록, 회장·임원만 '읽음 n' 과 읽은 사람을 볼 수 있어요
+// ============================================================
+let readsUnsub = null, pokesUnsub = null, lastMarked = 0, markTimer = null;
+function syncOfficerSubs() {
+  if (isOfficer() && !readsUnsub) {
+    readsUnsub = onSnapshot(collection(db, "reads"), (qs) => {
+      S.reads = {};
+      qs.forEach((d) => (S.reads[d.id] = d.data(SNAP)));
+      renderChat();
+    }, (err) => console.error(err));
+    pokesUnsub = onSnapshot(collection(db, "pokes"), (qs) => {
+      S.pokes = {};
+      qs.forEach((d) => (S.pokes[d.id] = d.data(SNAP)));
+      renderHome();
+    }, (err) => console.error(err));
+    unsubs.push(() => { readsUnsub?.(); pokesUnsub?.(); readsUnsub = pokesUnsub = null; });
+  } else if (!isOfficer() && readsUnsub) {
+    readsUnsub(); pokesUnsub?.(); readsUnsub = pokesUnsub = null; S.reads = {}; S.pokes = {};
+  }
+}
+function markRead() {
+  if (document.visibilityState !== "visible" || !S.messages.length) return;
+  const lastT = toDate(S.messages[S.messages.length - 1].createdAt)?.getTime() || 0;
+  if (lastT <= lastMarked) return;
+  clearTimeout(markTimer);
+  markTimer = setTimeout(async () => {
+    lastMarked = Date.now();
+    try { await setDoc(doc(db, "reads", S.uid), { at: serverTimestamp() }); } catch (e) { console.error(e); }
+  }, 1500);
+}
+document.addEventListener("visibilitychange", () => { if (S.tab === "chat") markRead(); });
+function readersOf(m) {
+  const t = toDate(m.createdAt)?.getTime() || 0;
+  const read = [], unread = [];
+  for (const [uid, mem] of Object.entries(S.members)) {
+    if (uid === m.uid) continue;
+    const at = toDate(S.reads[uid]?.at)?.getTime() || 0;
+    (at >= t ? read : unread).push(mem.name);
+  }
+  return { read, unread };
+}
+function openReads(msgId) {
+  const m = S.messages.find((x) => x.id === msgId);
+  if (!m) return;
+  const { read, unread } = readersOf(m);
+  $("#reads-body").innerHTML = `
+    <div><b>읽음 ${read.length}</b><div class="names" style="margin-top:4px">${read.map((n) => `<span class="name-pill">${esc(n)}</span>`).join("") || '<span class="muted">-</span>'}</div></div>
+    <div><b>안 읽음 ${unread.length}</b><div class="names" style="margin-top:4px">${unread.map((n) => `<span class="name-pill">${esc(n)}</span>`).join("") || '<span class="muted">-</span>'}</div></div>`;
+  $("#reads-modal").hidden = false;
+}
+$("#reads-close").addEventListener("click", () => ($("#reads-modal").hidden = true));
+$("#reads-modal").addEventListener("click", (e) => { if (e.target === e.currentTarget) e.currentTarget.hidden = true; });
+
+// ============================================================
+//  참석 콕 찌르기 — 회장·임원이 무응답자에게 보내면, 그 사람이 사이트를 열 때 참석 선택 창이 떠요
+// ============================================================
+$("#rsvp-lists").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-poke]");
+  if (!b || !isOfficer()) return;
+  b.disabled = true;
+  try {
+    await setDoc(doc(db, "pokes", b.dataset.poke), { from: S.uid, fromName: S.me.name, date: S.wedKey, at: serverTimestamp() });
+    toast(`${memberName(b.dataset.poke)} 님을 콕 찔렀어요`);
+  } catch (err) { b.disabled = false; toast(errMsg(err)); }
+});
+function showPokeIfNeeded() {
+  const pk = S.myPoke, modal = $("#poke-modal");
+  if (!pk || !pk.date || pk.date < dateKey(today0())) { modal.hidden = true; return; }
+  const key = `suyo-poke-${pk.date}-${toDate(pk.at)?.getTime() || 0}`;
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem(key) === "1"; } catch { /* 무시 */ }
+  if (dismissed) return;
+  $("#poke-title").textContent = `${memberName(pk.from, pk.fromName)}님이 콕 찔렀어요!`;
+  $("#poke-desc").textContent = `${dayLabel(parseKey(pk.date))} 모임에 올 수 있는지 알려 주세요.`;
+  modal.dataset.key = key;
+  modal.hidden = false;
+}
+$("#poke-modal").addEventListener("click", async (e) => {
+  const ans = e.target.closest("[data-poke-ans]");
+  const later = e.target.closest("#poke-later");
+  const modal = $("#poke-modal");
+  if (later) { try { sessionStorage.setItem(modal.dataset.key, "1"); } catch { /* 무시 */ } modal.hidden = true; return; }
+  if (!ans || !S.myPoke) return;
+  const date = S.myPoke.date;
+  try {
+    await setDoc(doc(db, "attendance", `${date}_${S.uid}`), { date, uid: S.uid, name: S.me.name, status: ans.dataset.pokeAns, at: serverTimestamp() });
+    await deleteDoc(doc(db, "pokes", S.uid));
+    modal.hidden = true;
+    toast("참석 여부를 알렸어요");
+  } catch (err) { toast(errMsg(err)); }
+});
+
+// ============================================================
+//  이달의 리포트 — 모임 횟수, 많이 간 곳, 이달 최고 평점, 출석왕, 벌금왕
+// ============================================================
+const ymOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+function computeReport(ym) {
+  const tk = dateKey(today0());
+  const inMonth = (d) => d && ymOf(d) === ym;
+  const vs = visits().filter((v) => v.date.startsWith(ym));
+  const byPlace = {};
+  vs.forEach((v) => (byPlace[v.place] = (byPlace[v.place] || 0) + 1));
+  const revs = S.reviews.filter((r) => inMonth(toDate(r.at)));
+  const byRev = {};
+  revs.forEach((r) => { const x = (byRev[r.placeId] ||= { sum: 0, n: 0 }); x.sum += Number(r.stars || 0); x.n++; });
+  const best = Object.entries(byRev).map(([id, x]) => ({ name: S.places.find((p) => p.id === id)?.name, avg: x.sum / x.n, n: x.n }))
+    .filter((x) => x.name).sort((a, b) => b.avg - a.avg || b.n - a.n);
+  const att = {};
+  S.allYes.filter((a) => a.date?.startsWith(ym) && a.date <= tk).forEach((a) => (att[a.uid] = (att[a.uid] || 0) + 1));
+  const fine = {};
+  S.fines.filter((f) => inMonth(toDate(f.at))).forEach((f) => (fine[f.uid] = (fine[f.uid] || 0) + (f.amount || 0)));
+  return {
+    meets: vs.length,
+    newPlaces: S.places.filter((p) => inMonth(toDate(p.createdAt))).length,
+    reviews: revs.length,
+    places: Object.entries(byPlace).sort((a, b) => b[1] - a[1]),
+    best,
+    att: Object.entries(att).sort((a, b) => b[1] - a[1]),
+    fine: Object.entries(fine).sort((a, b) => b[1] - a[1]),
+  };
+}
+function renderReportCard() {
+  const now = new Date();
+  const r = computeReport(ymOf(now));
+  $("#report-eyebrow").textContent = `${now.getMonth() + 1}월 리포트`;
+  const parts = [`모임 ${r.meets}번`];
+  if (r.att[0]) parts.push(`출석왕 ${memberName(r.att[0][0])}`);
+  if (r.best[0]) parts.push(`최고 평점 ${r.best[0].name} ${fmt1(r.best[0].avg)}`);
+  $("#report-line").textContent = parts.join(" · ");
+}
+function renderReport() {
+  const ym = S.reportMonth;
+  const [y, m] = ym.split("-").map(Number);
+  $("#rep-title").textContent = `${y}년 ${m}월 리포트`;
+  const r = computeReport(ym);
+  $("#rep-meets").textContent = r.meets;
+  $("#rep-new").textContent = r.newPlaces;
+  $("#rep-reviews").textContent = r.reviews;
+  const rows = (arr, fmtCt, empty) => arr.length
+    ? arr.slice(0, 5).map((x, i) => `<div class="rank"><span class="no">${i + 1}</span><span class="nm">${esc(x[0])}</span><span class="ct">${fmtCt(x)}</span></div>`).join("")
+    : `<div class="rank"><span class="muted small">${empty}</span></div>`;
+  $("#rep-places").innerHTML = rows(r.places, (x) => `${x[1]}번`, "이달 모임 기록이 없어요.");
+  $("#rep-best").innerHTML = rows(r.best.map((b) => [b.name, b]), (x) => `★ ${fmt1(x[1].avg)} (${x[1].n}명)`, "이달 남긴 평점이 없어요.");
+  $("#rep-att").innerHTML = rows(r.att.map(([u, c]) => [memberName(u), c]), (x) => `${x[1]}/${r.meets || x[1]}회`, "이달 참석 기록이 없어요.");
+  $("#rep-fine").innerHTML = rows(r.fine.map(([u, a]) => [memberName(u), a]), (x) => won(x[1]), "이달은 아무도 욕을 안 했어요!");
+}
+$("#report-open").addEventListener("click", () => { S.reportMonth = ymOf(new Date()); renderReport(); $("#report").hidden = false; });
+$("#report").addEventListener("click", (e) => { if (e.target === e.currentTarget || e.target.closest("[data-close-report]")) $("#report").hidden = true; });
+function shiftReport(n) {
+  const [y, m] = S.reportMonth.split("-").map(Number);
+  S.reportMonth = ymOf(new Date(y, m - 1 + n, 1));
+  renderReport();
+}
+$("#rep-prev").addEventListener("click", () => shiftReport(-1));
+$("#rep-next").addEventListener("click", () => shiftReport(1));

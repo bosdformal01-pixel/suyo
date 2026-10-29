@@ -176,6 +176,12 @@
           <div id="home-schedule" class="mini-list"></div>
         </div>
 
+        <button class="card report-card" type="button" id="report-open">
+          <span class="eyebrow" id="report-eyebrow"></span>
+          <span class="report-line" id="report-line"></span>
+          <span class="muted small">이달의 리포트 보기 ›</span>
+        </button>
+
         <div class="card">
           <div class="card-head">
             <h3>우리가 간 곳 <span id="history-count" class="muted"></span></h3>
@@ -216,6 +222,12 @@
                 <option value="">맛집 목록에서 추가…</option>
               </select>
             </div>
+            <div class="row wrap pick-filters">
+              <label class="chk"><input type="checkbox" id="poll-multi"> 여러 개 선택</label>
+              <label class="chk"><input type="checkbox" id="poll-anon"> 이름 숨김</label>
+            </div>
+            <label for="poll-deadline">마감 시간 <span class="muted small">(선택)</span></label>
+            <input id="poll-deadline" type="datetime-local">
             <button class="btn primary wide" type="submit">투표 올리기</button>
           </form>
         </details>
@@ -227,6 +239,7 @@
         <button id="chat-notice" class="chat-notice" type="button" data-goto="home" hidden></button>
         <div id="chat-list" class="chat-list" aria-live="polite"></div>
         <div id="chat-ban" class="chat-ban" role="status" hidden></div>
+        <div id="mention-box" class="mention-box" hidden></div>
         <form id="chat-form" class="chat-form">
           <label class="photo-btn" for="chat-photo" aria-label="사진 보내기" title="사진 보내기">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
@@ -549,6 +562,52 @@
         <div class="set-label">전체 기록</div>
         <div id="hist-list" class="hist-list"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== 이달의 리포트 ===== -->
+  <div id="report" class="overlay" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="rep-title">
+      <div class="sheet-head">
+        <button class="icon-btn" id="rep-prev" aria-label="이전 달">‹</button>
+        <h3 id="rep-title"></h3>
+        <div class="row">
+          <button class="icon-btn" id="rep-next" aria-label="다음 달">›</button>
+          <button class="icon-btn" data-close-report aria-label="닫기">×</button>
+        </div>
+      </div>
+      <div class="stat-grid three">
+        <div class="stat"><div class="stat-label">모임</div><div class="stat-num" id="rep-meets">0</div></div>
+        <div class="stat"><div class="stat-label">새 맛집</div><div class="stat-num" id="rep-new">0</div></div>
+        <div class="stat"><div class="stat-label">남긴 평점</div><div class="stat-num" id="rep-reviews">0</div></div>
+      </div>
+      <div class="set-group"><div class="set-label">많이 간 곳</div><div id="rep-places" class="rank-list"></div></div>
+      <div class="set-group"><div class="set-label">이달 최고 평점</div><div id="rep-best" class="rank-list"></div></div>
+      <div class="set-group"><div class="set-label">출석왕</div><div id="rep-att" class="rank-list"></div></div>
+      <div class="set-group"><div class="set-label">벌금왕</div><div id="rep-fine" class="rank-list"></div></div>
+    </div>
+  </div>
+
+  <!-- ===== 참석 콕 찌르기 받은 창 ===== -->
+  <div id="poke-modal" class="overlay center" hidden>
+    <div class="modal stack" role="dialog" aria-modal="true" aria-labelledby="poke-title">
+      <h3 id="poke-title"></h3>
+      <p id="poke-desc" class="muted small"></p>
+      <div class="rsvp-buttons" role="group" aria-label="참석 여부">
+        <button class="rsvp yes" type="button" data-poke-ans="yes">참석</button>
+        <button class="rsvp maybe" type="button" data-poke-ans="maybe">미정</button>
+        <button class="rsvp no" type="button" data-poke-ans="no">불참</button>
+      </div>
+      <button class="btn ghost" type="button" id="poke-later">나중에</button>
+    </div>
+  </div>
+
+  <!-- ===== 읽은 사람 ===== -->
+  <div id="reads-modal" class="overlay center" hidden>
+    <div class="modal stack" role="dialog" aria-modal="true" aria-labelledby="reads-title">
+      <h3 id="reads-title">읽은 사람</h3>
+      <div id="reads-body" class="stack tight small"></div>
+      <button class="btn primary" type="button" id="reads-close">확인</button>
     </div>
   </div>
 
