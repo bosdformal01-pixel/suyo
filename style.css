@@ -200,7 +200,7 @@ label { font-size: .85rem; font-weight: 600; }
 /* ---------- 탭바 ---------- */
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
   background: var(--surface);
@@ -572,6 +572,34 @@ label { font-size: .85rem; font-weight: 600; }
 .fine-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .fine-row .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--no); }
 .fine-row .amt.zero { color: var(--muted); font-weight: 500; }
+
+/* ---------- 법령 ---------- */
+.law-cover {
+  background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--accent);
+  border-radius: var(--radius); padding: 18px 16px; display: flex; flex-direction: column; gap: 6px;
+}
+.law-title { font-family: var(--font-display); font-weight: 400; font-size: 1.7rem; letter-spacing: .02em; }
+.law-list { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.law { padding: 14px 16px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.law:first-child { border-top: 0; }
+.law-hd { display: flex; align-items: baseline; gap: 8px; justify-content: space-between; }
+.law-hd h3 { font-size: 1rem; }
+.law-no { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 4px; }
+.law-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: .93rem; margin: 0; }
+.law-foot { font-size: .72rem; color: var(--muted); }
+.nowrap { white-space: nowrap; }
+
+/* ---------- 채팅 정지 ---------- */
+.chat-ban {
+  position: fixed; z-index: 26; left: 0; right: 0;
+  bottom: calc(var(--tabbar-h) + 62px + env(safe-area-inset-bottom));
+  max-width: var(--maxw); margin: 0 auto;
+  padding: 8px max(16px, env(safe-area-inset-right)) 8px max(16px, env(safe-area-inset-left));
+  background: var(--no-soft); color: var(--no); font-weight: 700; font-size: .85rem; text-align: center;
+  border-top: 1px solid var(--no);
+}
+.chat-form.locked textarea, .chat-form.locked .btn, .chat-form.locked .photo-btn { opacity: .45; pointer-events: none; }
+.ban-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: .85rem; color: var(--no); font-weight: 600; }
 
 /* ---------- 토스트 ---------- */
 .toast {

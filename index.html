@@ -226,6 +226,7 @@
       <section id="view-chat" class="view chat-view" data-view="chat" hidden>
         <button id="chat-notice" class="chat-notice" type="button" data-goto="home" hidden></button>
         <div id="chat-list" class="chat-list" aria-live="polite"></div>
+        <div id="chat-ban" class="chat-ban" role="status" hidden></div>
         <form id="chat-form" class="chat-form">
           <label class="photo-btn" for="chat-photo" aria-label="사진 보내기" title="사진 보내기">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
@@ -312,6 +313,36 @@
         </div>
         <div id="place-list" class="place-list"></div>
       </section>
+      <!-- ===== 법령 ===== -->
+      <section id="view-laws" class="view" data-view="laws" hidden>
+        <div class="law-cover">
+          <div class="eyebrow">水 · 수요미식회</div>
+          <h2 class="law-title">수요미식회 법령</h2>
+          <div class="muted small" id="law-meta"></div>
+          <div class="row wrap" style="justify-content:space-between">
+            <span class="muted small" id="law-who"></span>
+            <button id="law-add" class="btn primary sm" type="button" hidden>＋ 조항 추가</button>
+          </div>
+        </div>
+        <form id="law-form" class="card stack" hidden>
+          <h3 id="law-form-title">조항 추가</h3>
+          <div class="row">
+            <label for="law-no" class="nowrap">제</label>
+            <input id="law-no" type="number" min="1" max="999" inputmode="numeric" style="width:90px" required>
+            <span>조</span>
+          </div>
+          <label for="law-name">조항 제목</label>
+          <input id="law-name" maxlength="40" placeholder="예) 욕설 금지" required>
+          <label for="law-body">내용</label>
+          <textarea id="law-body" rows="6" maxlength="2000" placeholder="① 대화방에서 욕설을 한 사람은 1건당 100원을 낸다.&#10;② …" required></textarea>
+          <div class="row wrap">
+            <button class="btn primary" type="submit">저장</button>
+            <button class="btn ghost" type="button" id="law-cancel">취소</button>
+            <button class="btn danger" type="button" id="law-delete" hidden>이 조항 삭제</button>
+          </div>
+        </form>
+        <div id="law-list" class="law-list"></div>
+      </section>
     </main>
 
     <nav class="tabbar" aria-label="메뉴">
@@ -331,6 +362,10 @@
       <button class="tab" data-tab="places">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a7 7 0 0 0-7 7c0 5.2 7 12 7 12s7-6.8 7-12a7 7 0 0 0-7-7zm0 9.7a2.7 2.7 0 1 1 0-5.4 2.7 2.7 0 0 1 0 5.4z"/></svg>
         <span>맛집</span>
+      </button>
+      <button class="tab" data-tab="laws">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v2.1l5.5 1.4.9-.9 1.4 1.4-.6.6L23 13a4 4 0 0 1-8 0l2.8-5.4L13 6.4V19h4v2H7v-2h4V6.4L6.2 7.6 9 13a4 4 0 0 1-8 0l2.8-5.4-.6-.6 1.4-1.4.9.9L11 5.1zM5 9.3 3.3 12.6h3.4zm14 0-1.7 3.3h3.4z"/></svg>
+        <span>법령</span>
       </button>
     </nav>
   </div>

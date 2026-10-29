@@ -100,7 +100,7 @@ const S = {
   notices: [], allYes: [], routes: {},
   settle: null, paid: {},
   selected: null,
-  club: {}, fines: [],
+  club: {}, fines: [], laws: [], bans: {},
   tab: "home",
   lastPw: null, // 방금 로그인할 때 쓴 비밀번호 (비밀번호 변경 창에서 다시 묻지 않으려고 메모리에만 보관)
 };
@@ -335,7 +335,7 @@ function startApp() {
       const keepPw = S.me?.mustChangePw === false ? { mustChangePw: false } : {};
       S.me = { ...S.members[S.uid], ...keepPw };
     }
-    renderMe(); renderHome(); renderMembers(); renderSettle(); renderNotices(); renderHistory();
+    renderMe(); renderHome(); renderMembers(); renderSettle(); renderNotices(); renderHistory(); renderLaws();
   }));
 
   subscribeWeek();
@@ -354,6 +354,17 @@ function startApp() {
   unsubs.push(onSnapshot(doc(db, "settings", "club"), (d) => {
     S.club = d.exists() ? d.data() : {};
     renderSettle(); renderFines();
+  }, (err) => console.error(err)));
+
+  unsubs.push(onSnapshot(collection(db, "laws"), (qs) => {
+    S.laws = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
+    renderLaws();
+  }, (err) => console.error(err)));
+
+  unsubs.push(onSnapshot(collection(db, "bans"), (qs) => {
+    S.bans = {};
+    qs.forEach((d) => (S.bans[d.id] = d.data(SNAP)));
+    renderBan(); renderFines();
   }, (err) => console.error(err)));
 
   unsubs.push(onSnapshot(collection(db, "fines"), (qs) => {
@@ -400,7 +411,7 @@ function startApp() {
   }));
 
   const start = location.hash.replace("#", "");
-  showTab(["home", "polls", "chat", "places"].includes(start) ? start : "home");
+  showTab(["home", "polls", "chat", "places", "laws"].includes(start) ? start : "home");
 }
 
 function renderMe() {
@@ -1024,6 +1035,7 @@ $("#chat-list").addEventListener("click", async (e) => {
 //  공지 고정 (회장·임원이 쓰고 해제)
 // ============================================================
 async function addNotice(text) {
+  if (!isOfficer()) { toast("공지는 회장·임원만 올릴 수 있어요"); return; }
   try {
     await addDoc(collection(db, "notices"), { text, createdBy: S.uid, createdByName: S.me.name, createdAt: serverTimestamp() });
     toast("공지로 고정했어요");
@@ -1059,6 +1071,7 @@ $("#notice-form").addEventListener("submit", async (e) => {
 $("#notice-list").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-unpin]");
   if (!b) return;
+  if (!isOfficer()) { toast("공지는 회장·임원만 내릴 수 있어요"); return; }
   try { await deleteDoc(doc(db, "notices", b.dataset.unpin)); toast("공지를 내렸어요"); } catch (err) { toast(errMsg(err)); }
 });
 
@@ -1151,8 +1164,19 @@ function renderFines() {
           ${isOfficer() && x.unpaid ? `<button class="btn ghost sm" type="button" data-fine-paid="${u}">납부 확인</button>` : ""}</span></div>`).join("")}</div>
        <div class="muted small">아직 안 낸 벌금 합계 ${won(unpaidTotal)}</div>${unpaidTotal ? accountHtml() : ""}`
     : '<div class="empty-note">아직 벌금이 없어요. 대화방에서 욕을 쓰면 1건마다 자동으로 기록돼요.</div>';
+  const banned = Object.entries(S.bans).filter(([u]) => banLeftMs(u) > 0);
+  if (banned.length) {
+    $("#fine-view").innerHTML += `<div class="stack tight" style="margin-top:8px">${banned.map(([u]) => `
+      <div class="ban-row"><span>채팅 정지: ${esc(memberName(u))} · ${Math.ceil(banLeftMs(u) / 60000)}분 남음</span>
+        ${isAdmin() ? `<button class="btn ghost sm" type="button" data-unban="${u}">정지 해제</button>` : ""}</div>`).join("")}</div>`;
+  }
 }
 $("#fine-view").addEventListener("click", async (e) => {
+  const ub = e.target.closest("[data-unban]");
+  if (ub) {
+    try { await deleteDoc(doc(db, "bans", ub.dataset.unban)); toast("채팅 정지를 풀었어요"); } catch (err) { toast(errMsg(err)); }
+    return;
+  }
   const b = e.target.closest("[data-fine-paid]");
   if (!b) return;
   const u = b.dataset.finePaid;
@@ -1196,6 +1220,7 @@ $("#chat-photo").addEventListener("change", async (e) => {
   e.target.value = "";
   if (!file) return;
   if (!file.type.startsWith("image/")) { toast("사진 파일만 보낼 수 있어요"); return; }
+  if (banLeftMs() > 0) { toast("채팅 정지 중이에요"); return; }
   toast("사진 줄이는 중…");
   try {
     const img = await loadImage(file);
@@ -1230,10 +1255,18 @@ async function recordFine(text, msgId) {
   const n = countBadWords(text || "");
   if (!n || !fineAmount()) return;
   try {
-    await addDoc(collection(db, "fines"), {
+    const hourAgo = Date.now() - 3600 * 1000;
+    const before = S.fines.filter((f) => f.uid === S.uid && (toDate(f.at)?.getTime() || Date.now()) > hourAgo).reduce((a, f) => a + (f.count || 1), 0);
+    const ref = await addDoc(collection(db, "fines"), {
       uid: S.uid, name: S.me.name, count: n, amount: n * fineAmount(), msgId, paid: false, at: serverTimestamp(),
     });
-    toast(`욕설 ${n}건 감지! 벌금 ${won(n * fineAmount())}이 기록됐어요`);
+    const recent = before + n; void ref;
+    if (recent >= BAN_LIMIT) {
+      await setDoc(doc(db, "bans", S.uid), { uid: S.uid, name: S.me.name, count: recent, at: serverTimestamp() });
+      toast(`1시간 동안 욕설 ${recent}회! 10분 동안 채팅이 정지돼요`);
+    } else {
+      toast(`욕설 ${n}건 감지! 벌금 ${won(n * fineAmount())}이 기록됐어요 (1시간 안에 ${BAN_LIMIT}회면 10분 정지)`);
+    }
   } catch (e) { console.error(e); }
 }
 
@@ -1409,6 +1442,7 @@ $("#chat-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const text = chatInput.value.trim();
   if (!text) return;
+  if (banLeftMs() > 0) { toast("채팅 정지 중이에요"); return; }
   chatInput.value = ""; chatInput.style.height = "auto";
   try {
     const ref = await addDoc(collection(db, "messages"), { uid: S.uid, name: S.me.name, text, createdAt: serverTimestamp() });
@@ -1947,3 +1981,105 @@ $("#set-install").addEventListener("click", async () => {
   $("#install-modal").hidden = false;
 });
 $("#inst-close").addEventListener("click", () => ($("#install-modal").hidden = true));
+
+// ============================================================
+//  채팅 정지 — 1시간 안에 욕설 5회 이상이면 10분 동안 채팅 금지
+//  (bans/{uid} 문서의 시간을 서버 규칙도 확인해서, 화면을 우회해도 메시지가 안 보내져요)
+// ============================================================
+const BAN_LIMIT = 5, BAN_MINUTES = 10;
+function banLeftMs(uid = S.uid) {
+  const b = S.bans[uid];
+  const t = toDate(b?.at)?.getTime();
+  if (!t) return 0;
+  return Math.max(0, t + BAN_MINUTES * 60000 - Date.now());
+}
+let banTimer = null;
+function renderBan() {
+  if (!S.me) return;
+  const left = banLeftMs();
+  const box = $("#chat-ban"), form = $("#chat-form");
+  box.hidden = left <= 0;
+  form.classList.toggle("locked", left > 0);
+  chatInput.disabled = left > 0;
+  if (left > 0) {
+    const m = Math.floor(left / 60000), sec = Math.floor((left % 60000) / 1000);
+    box.textContent = `욕설 반복으로 채팅 정지 중 · ${m}:${String(sec).padStart(2, "0")} 남음`;
+    if (!banTimer) banTimer = setInterval(() => { renderBan(); if (banLeftMs() <= 0) { clearInterval(banTimer); banTimer = null; renderBan(); renderFines(); } }, 1000);
+  }
+}
+
+// ============================================================
+//  법령 — 보기는 모두, 추가·수정·삭제는 법무부 장관·국회 의장 직책만
+// ============================================================
+const LAW_TITLES = ["법무부장관", "국회의장"];
+const isLawmaker = () => LAW_TITLES.includes(String(S.me?.title || "").replace(/\s/g, ""));
+let lawEditing = null;
+function renderLaws() {
+  if (!S.me) return;
+  const can = isLawmaker();
+  const list = [...S.laws].sort((a, b) => (a.no - b.no) || ((toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0)));
+  const last = [...S.laws].sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0))[0];
+  $("#law-meta").textContent = list.length
+    ? `총 ${list.length}개 조항 · 최근 개정 ${toDate(last.updatedAt) ? dateKey(toDate(last.updatedAt)).replaceAll("-", ".") : "방금"} (${memberName(last.updatedBy, last.updatedByName)})`
+    : "아직 제정된 조항이 없어요.";
+  const editors = Object.values(S.members).filter((m) => LAW_TITLES.includes(String(m.title || "").replace(/\s/g, ""))).map((m) => `${m.name}(${m.title})`);
+  $("#law-who").textContent = editors.length ? `개정 권한: ${editors.join(", ")}` : "개정 권한: 법무부 장관 · 국회 의장";
+  $("#law-add").hidden = !can || !$("#law-form").hidden;
+  $("#law-list").innerHTML = list.length
+    ? list.map((l) => `
+        <article class="law">
+          <div class="law-hd"><h3><span class="law-no">제${l.no}조</span>(${esc(l.title)})</h3>
+            ${can ? `<button class="btn ghost sm" type="button" data-law-edit="${l.id}">수정</button>` : ""}</div>
+          <p class="law-body">${esc(l.body)}</p>
+          <div class="law-foot">${toDate(l.updatedAt) ? dateKey(toDate(l.updatedAt)).replaceAll("-", ".") : "방금"} ${l.createdAt && l.updatedAt && toDate(l.createdAt)?.getTime() !== toDate(l.updatedAt)?.getTime() ? "개정" : "제정"} · ${esc(memberName(l.updatedBy, l.updatedByName))}</div>
+        </article>`).join("")
+    : `<div class="law"><span class="empty-note">${can ? "＋ 조항 추가를 눌러 첫 조항(예: 제1조 목적)을 만들어 보세요." : "법무부 장관이나 국회 의장이 조항을 만들면 여기에 보여요."}</span></div>`;
+}
+function openLawForm(law) {
+  lawEditing = law?.id || null;
+  $("#law-form-title").textContent = law ? `제${law.no}조 수정` : "조항 추가";
+  $("#law-no").value = law?.no ?? (Math.max(0, ...S.laws.map((l) => l.no || 0)) + 1);
+  $("#law-name").value = law?.title || "";
+  $("#law-body").value = law?.body || "";
+  $("#law-delete").hidden = !law;
+  $("#law-form").hidden = false;
+  renderLaws();
+  $("#law-form").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function closeLawForm() { lawEditing = null; $("#law-form").hidden = true; renderLaws(); }
+$("#law-add").addEventListener("click", () => openLawForm(null));
+$("#law-cancel").addEventListener("click", closeLawForm);
+$("#law-list").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-law-edit]");
+  if (b) openLawForm(S.laws.find((l) => l.id === b.dataset.lawEdit));
+});
+$("#law-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!isLawmaker()) { toast("법무부 장관·국회 의장만 고칠 수 있어요"); return; }
+  const data = {
+    no: Math.max(1, Math.min(999, Math.round(Number($("#law-no").value) || 1))),
+    title: $("#law-name").value.trim(), body: $("#law-body").value.trim(),
+    updatedBy: S.uid, updatedByName: S.me.name, updatedAt: serverTimestamp(),
+  };
+  if (!data.title || !data.body) return;
+  try {
+    if (lawEditing) {
+      const prev = S.laws.find((l) => l.id === lawEditing);
+      await setDoc(doc(db, "laws", lawEditing), { ...data, createdAt: prev?.createdAt || serverTimestamp() });
+    } else {
+      await addDoc(collection(db, "laws"), { ...data, createdAt: serverTimestamp() });
+    }
+    toast(lawEditing ? "조항을 개정했어요" : "조항을 제정했어요");
+    closeLawForm();
+  } catch (err) { toast(errMsg(err)); }
+});
+$("#law-delete").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (!lawEditing) return;
+  if (btn.dataset.confirm !== "1") {
+    btn.dataset.confirm = "1"; btn.textContent = "정말 삭제?";
+    setTimeout(() => { btn.dataset.confirm = ""; btn.textContent = "이 조항 삭제"; }, 3000);
+    return;
+  }
+  try { await deleteDoc(doc(db, "laws", lawEditing)); toast("조항을 삭제했어요"); closeLawForm(); } catch (err) { toast(errMsg(err)); }
+});
