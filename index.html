@@ -331,6 +331,10 @@
         <div class="law-cover">
           <div class="eyebrow">水 · 수요미식회</div>
           <h2 class="law-title">수요미식회 법령</h2>
+          <div class="seg law-seg" role="tablist" aria-label="법령 종류">
+            <button type="button" role="tab" data-law-kind="constitution">헌법</button>
+            <button type="button" role="tab" data-law-kind="civil">민법</button>
+          </div>
           <div class="muted small" id="law-meta"></div>
           <div class="row wrap" style="justify-content:space-between">
             <span class="muted small" id="law-who"></span>
@@ -344,8 +348,13 @@
             <input id="law-no" type="number" min="1" max="999" inputmode="numeric" style="width:90px" required>
             <span>조</span>
           </div>
-          <label for="law-name">조항 제목</label>
-          <input id="law-name" maxlength="40" placeholder="예) 욕설 금지" required>
+          <div id="law-chapter-wrap" class="stack tight">
+            <label for="law-chapter">장(章)</label>
+            <input id="law-chapter" maxlength="30" list="law-chapters" placeholder="예) 제1장 총강">
+            <datalist id="law-chapters"></datalist>
+          </div>
+          <label for="law-name" id="law-name-label">조항 제목</label>
+          <input id="law-name" maxlength="40" placeholder="예) 욕설 금지">
           <label for="law-body">내용</label>
           <textarea id="law-body" rows="6" maxlength="2000" placeholder="① 대화방에서 욕설을 한 사람은 1건당 100원을 낸다.&#10;② …" required></textarea>
           <div class="row wrap">

@@ -574,6 +574,10 @@ label { font-size: .85rem; font-weight: 600; }
 .fine-row .amt.zero { color: var(--muted); font-weight: 500; }
 
 /* ---------- 법령 ---------- */
+.law-seg { margin: 4px 0; max-width: 260px; }
+.law-chapter { padding: 10px 16px; background: var(--surface-2); font-weight: 700; font-size: .9rem; border-top: 1px solid var(--line); color: var(--accent); }
+.law-chapter:first-child { border-top: 0; }
+.law-draft { font-size: .78rem; color: var(--maybe); background: var(--maybe-soft); border-radius: 8px; padding: 8px 10px; }
 .law-cover {
   background: var(--surface); border: 1px solid var(--line); border-top: 4px solid var(--accent);
   border-radius: var(--radius); padding: 18px 16px; display: flex; flex-direction: column; gap: 6px;

@@ -2071,32 +2071,75 @@ function renderBan() {
 // ============================================================
 const LAW_TITLES = ["법무부장관", "국회의장"];
 const isLawmaker = () => LAW_TITLES.includes(String(S.me?.title || "").replace(/\s/g, ""));
-let lawEditing = null;
+// 헌법 제1장 총강 — 아직 DB에 등록되기 전에도 모두에게 보이는 기본 등록본
+const CONSTITUTION_DEFAULT = [
+  [1, "① 수요미식회는 민주공화회이다.\n② 수요미식회의 주권은 회원에게 있고, 모든 권력은 회원으로부터 나온다."],
+  [2, "① 수요미식회의 회원이 되는 요건은 법률로 정한다.\n② 수요미식회는 법률이 정하는 바에 의하여 재외회원을 보호할 의무를 진다."],
+  [3, "수요미식회의 영역은 인스타그램 그룹 채팅으로 한다."],
+  [4, "수요미식회는 메뉴통일을 지향하며, 자유민주적 기본질서에 입각한 평화적 메뉴통일 정책을 수립하고 이를 추진한다."],
+  [5, "① 수요미식회는 대외평화의 유지에 노력하고 침략적 전쟁을 부인한다.\n② 방위군은 수요미식회의 안전보장과 영역방위의 신성한 의무를 수행함을 사명으로 하며, 그 정치적 중립성은 준수된다."],
+  [6, "① 헌법에 의하여 체결·공포된 예약과 일반적으로 승인된 대외법규는 대내법과 같은 효력을 가진다.\n② 외부인은 대외법과 예약이 정하는 바에 의하여 그 지위가 보장된다."],
+  [7, "① 공무원은 회원전체에 대한 봉사자이며, 회원에 대하여 책임을 진다.\n② 공무원의 신분과 정치적 중립성은 법률이 정하는 바에 의하여 보장된다."],
+  [8, "① 정당의 설립은 자유이며, 복수정당제는 보장된다.\n② 정당은 그 목적·조직과 활동이 민주적이어야 하며, 회원의 정치적 의사형성에 참여하는 데 필요한 조직을 가져야 한다.\n③ 정당은 법률이 정하는 바에 의하여 수요미식회의 보호를 받으며, 수요미식회는 법률이 정하는 바에 의하여 정당운영에 필요한 자금을 보조할 수 있다.\n④ 정당의 목적이나 활동이 민주적 기본질서에 위배될 때에는 정부는 헌법재판소에 그 해산을 제소할 수 있고, 정당은 헌법재판소의 심판에 의하여 해산된다."],
+  [9, "수요미식회는 전통문화의 계승·발전과 민준문화의 창달에 노력하여야 한다."],
+].map(([no, body]) => ({ id: `default-${no}`, kind: "constitution", chapter: "제1장 총강", no, title: "", body, isDefault: true }));
+const lawKind = (l) => (l.kind === "constitution" ? "constitution" : "civil");
+let lawEditing = null, lawTab = "constitution";
+function lawsOf(kind) {
+  const list = S.laws.filter((l) => lawKind(l) === kind);
+  if (kind === "constitution" && !list.length) return CONSTITUTION_DEFAULT;
+  return list;
+}
+function chapterNo(ch) { const m = String(ch || "").match(/제\s*(\d+)\s*장/); return m ? Number(m[1]) : 999; }
 function renderLaws() {
   if (!S.me) return;
   const can = isLawmaker();
-  const list = [...S.laws].sort((a, b) => (a.no - b.no) || ((toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0)));
-  const last = [...S.laws].sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0))[0];
+  $$("[data-law-kind]").forEach((b) => b.classList.toggle("on", b.dataset.lawKind === lawTab));
+  const list = [...lawsOf(lawTab)].sort((a, b) => (lawTab === "constitution" ? chapterNo(a.chapter) - chapterNo(b.chapter) : 0) || (a.no - b.no) || ((toDate(a.createdAt)?.getTime() || 0) - (toDate(b.createdAt)?.getTime() || 0)));
+  const usingDefault = list.length && list[0].isDefault;
+  const real = list.filter((l) => !l.isDefault);
+  const last = [...real].sort((a, b) => (toDate(b.updatedAt)?.getTime() || 0) - (toDate(a.updatedAt)?.getTime() || 0))[0];
+  const kindName = lawTab === "constitution" ? "헌법" : "민법";
   $("#law-meta").textContent = list.length
-    ? `총 ${list.length}개 조항 · 최근 개정 ${toDate(last.updatedAt) ? dateKey(toDate(last.updatedAt)).replaceAll("-", ".") : "방금"} (${memberName(last.updatedBy, last.updatedByName)})`
-    : "아직 제정된 조항이 없어요.";
+    ? `${kindName} ${list.length}개 조항${last ? ` · 최근 개정 ${toDate(last.updatedAt) ? dateKey(toDate(last.updatedAt)).replaceAll("-", ".") : "방금"} (${memberName(last.updatedBy, last.updatedByName)})` : ""}`
+    : `아직 제정된 ${kindName} 조항이 없어요.`;
   const editors = Object.values(S.members).filter((m) => LAW_TITLES.includes(String(m.title || "").replace(/\s/g, ""))).map((m) => `${m.name}(${m.title})`);
   $("#law-who").textContent = editors.length ? `개정 권한: ${editors.join(", ")}` : "개정 권한: 법무부 장관 · 국회 의장";
   $("#law-add").hidden = !can || !$("#law-form").hidden;
+  $("#law-chapters").innerHTML = [...new Set(lawsOf("constitution").map((l) => l.chapter).filter(Boolean))].map((c) => `<option value="${esc(c)}">`).join("");
+  let lastCh = null;
+  const items = list.map((l) => {
+    let head = "";
+    if (lawTab === "constitution" && (l.chapter || "") !== lastCh) { lastCh = l.chapter || ""; head = lastCh ? `<div class="law-chapter">${esc(lastCh)}</div>` : ""; }
+    const heading = l.title ? `<span class="law-no">제${l.no}조</span>(${esc(l.title)})` : `<span class="law-no">제${l.no}조</span>`;
+    const foot = l.isDefault ? "기본 등록본" : `${toDate(l.updatedAt) ? dateKey(toDate(l.updatedAt)).replaceAll("-", ".") : "방금"} ${l.createdAt && l.updatedAt && toDate(l.createdAt)?.getTime() !== toDate(l.updatedAt)?.getTime() ? "개정" : "제정"} · ${esc(memberName(l.updatedBy, l.updatedByName))}`;
+    return `${head}<article class="law">
+        <div class="law-hd"><h3>${heading}</h3>
+          ${can && !l.isDefault ? `<button class="btn ghost sm" type="button" data-law-edit="${l.id}">수정</button>` : ""}</div>
+        <p class="law-body">${esc(l.body)}</p>
+        <div class="law-foot">${foot}</div>
+      </article>`;
+  }).join("");
+  const draftNote = usingDefault
+    ? `<div class="law"><div class="law-draft">${can ? "지금 보이는 총강은 기본 등록본이에요. 아래 버튼을 누르면 정식으로 공포되고, 그다음부터 조항별로 개정할 수 있어요." : "헌법 제1장 총강(기본 등록본)이에요. 법무부 장관·국회 의장이 정식으로 공포할 예정이에요."}</div>
+       ${can ? '<button class="btn primary sm" type="button" id="law-promulgate" style="margin-top:8px">헌법 총강 공포하기</button>' : ""}</div>` : "";
   $("#law-list").innerHTML = list.length
-    ? list.map((l) => `
-        <article class="law">
-          <div class="law-hd"><h3><span class="law-no">제${l.no}조</span>(${esc(l.title)})</h3>
-            ${can ? `<button class="btn ghost sm" type="button" data-law-edit="${l.id}">수정</button>` : ""}</div>
-          <p class="law-body">${esc(l.body)}</p>
-          <div class="law-foot">${toDate(l.updatedAt) ? dateKey(toDate(l.updatedAt)).replaceAll("-", ".") : "방금"} ${l.createdAt && l.updatedAt && toDate(l.createdAt)?.getTime() !== toDate(l.updatedAt)?.getTime() ? "개정" : "제정"} · ${esc(memberName(l.updatedBy, l.updatedByName))}</div>
-        </article>`).join("")
-    : `<div class="law"><span class="empty-note">${can ? "＋ 조항 추가를 눌러 첫 조항(예: 제1조 목적)을 만들어 보세요." : "법무부 장관이나 국회 의장이 조항을 만들면 여기에 보여요."}</span></div>`;
+    ? draftNote + items
+    : `<div class="law"><span class="empty-note">${can ? `＋ 조항 추가를 눌러 첫 ${kindName} 조항을 만들어 보세요.` : `법무부 장관이나 국회 의장이 ${kindName} 조항을 만들면 여기에 보여요.`}</span></div>`;
 }
+$$("[data-law-kind]").forEach((b) => b.addEventListener("click", () => { lawTab = b.dataset.lawKind; closeLawForm(); }));
 function openLawForm(law) {
   lawEditing = law?.id || null;
-  $("#law-form-title").textContent = law ? `제${law.no}조 수정` : "조항 추가";
-  $("#law-no").value = law?.no ?? (Math.max(0, ...S.laws.map((l) => l.no || 0)) + 1);
+  const kind = law ? lawKind(law) : lawTab;
+  const kindName = kind === "constitution" ? "헌법" : "민법";
+  $("#law-form").dataset.kind = kind;
+  $("#law-form-title").textContent = law ? `${kindName} 제${law.no}조 개정` : `${kindName} 조항 추가`;
+  const same = lawsOf(kind).filter((l) => !l.isDefault);
+  $("#law-no").value = law?.no ?? (Math.max(0, ...same.map((l) => l.no || 0)) + 1);
+  $("#law-chapter-wrap").hidden = kind !== "constitution";
+  $("#law-chapter").value = law?.chapter || (kind === "constitution" ? (same[same.length - 1]?.chapter || "") : "");
+  $("#law-name-label").textContent = kind === "constitution" ? "조항 제목 (선택)" : "조항 제목";
+  $("#law-name").required = kind !== "constitution";
   $("#law-name").value = law?.title || "";
   $("#law-body").value = law?.body || "";
   $("#law-delete").hidden = !law;
@@ -2107,19 +2150,35 @@ function openLawForm(law) {
 function closeLawForm() { lawEditing = null; $("#law-form").hidden = true; renderLaws(); }
 $("#law-add").addEventListener("click", () => openLawForm(null));
 $("#law-cancel").addEventListener("click", closeLawForm);
-$("#law-list").addEventListener("click", (e) => {
+$("#law-list").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-law-edit]");
-  if (b) openLawForm(S.laws.find((l) => l.id === b.dataset.lawEdit));
+  if (b) { openLawForm(S.laws.find((l) => l.id === b.dataset.lawEdit)); return; }
+  if (e.target.closest("#law-promulgate")) {
+    if (!isLawmaker()) return;
+    e.target.disabled = true;
+    try {
+      const batch = writeBatch(db);
+      CONSTITUTION_DEFAULT.forEach((l) => batch.set(doc(collection(db, "laws")), {
+        kind: "constitution", chapter: l.chapter, no: l.no, title: "", body: l.body,
+        createdAt: serverTimestamp(), updatedBy: S.uid, updatedByName: S.me.name, updatedAt: serverTimestamp(),
+      }));
+      await batch.commit();
+      toast("헌법 제1장 총강을 공포했어요");
+    } catch (err) { e.target.disabled = false; toast(errMsg(err)); }
+  }
 });
 $("#law-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (!isLawmaker()) { toast("법무부 장관·국회 의장만 고칠 수 있어요"); return; }
+  const kind = $("#law-form").dataset.kind === "constitution" ? "constitution" : "civil";
   const data = {
+    kind,
+    chapter: kind === "constitution" ? $("#law-chapter").value.trim() : "",
     no: Math.max(1, Math.min(999, Math.round(Number($("#law-no").value) || 1))),
     title: $("#law-name").value.trim(), body: $("#law-body").value.trim(),
     updatedBy: S.uid, updatedByName: S.me.name, updatedAt: serverTimestamp(),
   };
-  if (!data.title || !data.body) return;
+  if (!data.body || (kind === "civil" && !data.title)) return;
   try {
     if (lawEditing) {
       const prev = S.laws.find((l) => l.id === lawEditing);
