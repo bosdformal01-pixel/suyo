@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>수요미식회</title>
+  <meta name="theme-color" content="#0f6f78">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- 로딩 / 오류 / 입장 화면 -->
+  <div id="gate" class="gate">
+    <div class="gate-card">
+      <div class="logo-mark big" aria-hidden="true">水</div>
+      <h1 class="wordmark">수요미식회</h1>
+      <p class="gate-sub">매주 수요일, 방과 후 한 끼</p>
+
+      <div id="gate-loading" class="gate-msg">불러오는 중…</div>
+      <div id="gate-error" class="gate-msg error" hidden></div>
+
+      <form id="join-form" class="join-form" hidden autocomplete="off">
+        <label for="join-name">닉네임</label>
+        <input id="join-name" maxlength="12" placeholder="예) 떡볶이장인" required>
+        <label for="join-code">입장 코드</label>
+        <input id="join-code" placeholder="회장에게 받은 코드" required>
+        <button class="btn primary wide" type="submit">입장하기</button>
+        <p class="hint">처음 한 번만 입력하면 돼요. 같은 폰·같은 브라우저로 접속하면 계속 로그인돼 있어요.</p>
+      </form>
+    </div>
+  </div>
+
+  <!-- 메인 앱 -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <span class="logo-mark" aria-hidden="true">水</span>
+        <span class="wordmark small">수요미식회</span>
+      </div>
+      <span id="me-chip" class="me-chip"></span>
+    </header>
+
+    <main class="views">
+
+      <!-- ===== 홈: 이번 주 수요일 ===== -->
+      <section id="view-home" class="view" data-view="home">
+        <div class="week-nav">
+          <button class="icon-btn" id="week-prev" aria-label="이전 주">‹</button>
+          <div class="week-title">
+            <div id="week-dday" class="eyebrow"></div>
+            <h2 id="week-date"></h2>
+          </div>
+          <button class="icon-btn" id="week-next" aria-label="다음 주">›</button>
+        </div>
+
+        <div class="card plan-card">
+          <div class="card-head">
+            <h3>모임 계획</h3>
+            <button class="btn ghost sm" id="plan-edit-btn" type="button">수정</button>
+          </div>
+          <dl id="plan-view" class="plan-list"></dl>
+          <form id="plan-form" class="stack" hidden>
+            <label for="plan-place">장소</label>
+            <input id="plan-place" list="place-datalist" maxlength="60" placeholder="식당 이름 (맛집 목록에서 고를 수 있어요)">
+            <datalist id="place-datalist"></datalist>
+            <label for="plan-time">모이는 시간</label>
+            <input id="plan-time" type="time">
+            <label for="plan-note">메모</label>
+            <textarea id="plan-note" rows="2" maxlength="300" placeholder="예) 정문 앞에서 만나요, 1인 1만원"></textarea>
+            <div class="row">
+              <button class="btn primary" type="submit">저장</button>
+              <button class="btn ghost" type="button" id="plan-cancel">취소</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>참석 여부</h3>
+            <span id="rsvp-summary" class="muted small"></span>
+          </div>
+          <div class="rsvp-buttons" role="group" aria-label="내 참석 여부">
+            <button class="rsvp yes" data-status="yes">참석</button>
+            <button class="rsvp maybe" data-status="maybe">미정</button>
+            <button class="rsvp no" data-status="no">불참</button>
+          </div>
+          <div id="rsvp-lists" class="rsvp-lists"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>진행 중인 투표</h3>
+            <button class="btn ghost sm" data-goto="polls" type="button">전체 보기</button>
+          </div>
+          <div id="home-polls" class="mini-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>최근 대화</h3>
+            <button class="btn ghost sm" data-goto="chat" type="button">대화방 가기</button>
+          </div>
+          <div id="home-chat" class="mini-list"></div>
+        </div>
+      </section>
+
+      <!-- ===== 투표 ===== -->
+      <section id="view-polls" class="view" data-view="polls" hidden>
+        <details class="card create-poll" id="poll-create">
+          <summary><span class="plus">＋</span> 새 투표 만들기</summary>
+          <form id="poll-form" class="stack">
+            <label for="poll-q">질문</label>
+            <input id="poll-q" maxlength="100" placeholder="예) 이번 주 어디 갈까?" required>
+            <label>선택지</label>
+            <div id="poll-options" class="stack tight"></div>
+            <div class="row wrap">
+              <button class="btn ghost sm" type="button" id="poll-add-opt">＋ 선택지 추가</button>
+              <select id="poll-add-place" class="sm-select" aria-label="맛집 목록에서 선택지 추가">
+                <option value="">맛집 목록에서 추가…</option>
+              </select>
+            </div>
+            <button class="btn primary wide" type="submit">투표 올리기</button>
+          </form>
+        </details>
+        <div id="poll-list" class="stack"></div>
+      </section>
+
+      <!-- ===== 대화 ===== -->
+      <section id="view-chat" class="view chat-view" data-view="chat" hidden>
+        <div id="chat-list" class="chat-list" aria-live="polite"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea id="chat-input" rows="1" maxlength="500" placeholder="메시지 보내기" aria-label="메시지"></textarea>
+          <button class="btn primary" type="submit" aria-label="보내기">보내기</button>
+        </form>
+      </section>
+
+      <!-- ===== 맛집 ===== -->
+      <section id="view-places" class="view" data-view="places" hidden>
+        <div class="map-wrap">
+          <div id="map" class="map"></div>
+          <div id="map-msg" class="map-msg" hidden></div>
+        </div>
+
+        <form id="search-form" class="search-form">
+          <input id="search-q" placeholder="식당 검색해서 추가하기 (예: 학교 앞 마라탕)" aria-label="식당 검색">
+          <button class="btn primary" type="submit">검색</button>
+        </form>
+        <div id="search-results" class="search-results" hidden></div>
+
+        <div id="place-detail" class="card place-detail" hidden>
+          <div class="card-head">
+            <div class="min0">
+              <h3 id="pd-name"></h3>
+              <div id="pd-meta" class="muted small"></div>
+            </div>
+            <button class="icon-btn" id="pd-close" aria-label="닫기">×</button>
+          </div>
+          <div id="pd-summary" class="pd-summary"></div>
+          <div class="row wrap">
+            <a id="pd-link" class="btn ghost sm" target="_blank" rel="noopener">카카오맵에서 보기</a>
+            <a id="pd-route" class="btn ghost sm" target="_blank" rel="noopener">길찾기</a>
+            <button id="pd-plan" class="btn ghost sm" type="button">이번 주 장소로 정하기</button>
+            <button id="pd-delete" class="btn danger sm" type="button" hidden>목록에서 삭제</button>
+          </div>
+
+          <form id="review-form" class="review-form stack">
+            <label>내 평점</label>
+            <div class="star-input" id="star-input" role="radiogroup" aria-label="별점">
+              <button type="button" data-v="1" aria-label="1점">★</button>
+              <button type="button" data-v="2" aria-label="2점">★</button>
+              <button type="button" data-v="3" aria-label="3점">★</button>
+              <button type="button" data-v="4" aria-label="4점">★</button>
+              <button type="button" data-v="5" aria-label="5점">★</button>
+            </div>
+            <textarea id="review-text" rows="2" maxlength="300" placeholder="한줄평 (선택) 예) 양 많고 소스 최고"></textarea>
+            <div class="row">
+              <button class="btn primary" type="submit">평점 저장</button>
+              <button class="btn ghost" type="button" id="review-delete" hidden>내 평점 지우기</button>
+            </div>
+          </form>
+          <div id="pd-reviews" class="reviews"></div>
+        </div>
+
+        <div class="list-head">
+          <h3>우리 맛집 <span id="place-count" class="muted"></span></h3>
+          <select id="place-sort" class="sm-select" aria-label="정렬">
+            <option value="rating">평점순</option>
+            <option value="count">리뷰 많은 순</option>
+            <option value="new">최근 추가순</option>
+          </select>
+        </div>
+        <div id="place-list" class="place-list"></div>
+      </section>
+    </main>
+
+    <nav class="tabbar" aria-label="메뉴">
+      <button class="tab" data-tab="home">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5V20h-5v-5.5H9V20H4z"/></svg>
+        <span>이번 주</span>
+      </button>
+      <button class="tab" data-tab="polls">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11h3v9zm5.5 0V4h3v16zM16 20v-6h3v6z"/></svg>
+        <span>투표</span>
+      </button>
+      <button class="tab" data-tab="chat">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>
+        <span>대화</span>
+        <i id="chat-badge" class="badge" hidden></i>
+      </button>
+      <button class="tab" data-tab="places">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5a7 7 0 0 0-7 7c0 5.2 7 12 7 12s7-6.8 7-12a7 7 0 0 0-7-7zm0 9.7a2.7 2.7 0 1 1 0-5.4 2.7 2.7 0 0 1 0 5.4z"/></svg>
+        <span>맛집</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
