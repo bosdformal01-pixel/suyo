@@ -29,7 +29,8 @@ window.SUYO_CONFIG = {
 
   // 6) ODsay LAB 대중교통 API 키 (버스 노선 안내용, lab.odsay.com 에서 무료 발급)
   //    비워 두면 버스 정보 대신 택시 추정 요금과 카카오맵 길찾기 링크만 보여요.
-  odsayKey: "",
+  //    ※ 무료(Basic)는 하루 30번까지 — 사이트는 식당마다 한 번만 찾고 저장해서 써요.
+  odsayKey: "pFFR0Q5DCWb+4zEO66S9/A",
 
   // 7) 택시 요금 (울산, 2025.3.10 인상분 기준) — 요금이 바뀌면 여기만 고치면 돼요
   taxi: { base: 4500, baseMeters: 2000, perMeters: 125, perWon: 100, perSeconds: 30 }

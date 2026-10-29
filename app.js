@@ -1362,6 +1362,7 @@ function kakaoRouteLink(p) {
 
 async function ensureBus(p) {
   if (!CFG.odsayKey || S.routes[p.id]?.from === SCHOOL.name || busState[p.id]) return;
+  if ((haversine(SCHOOL, p) * 1.25) / 67 <= 10) return; // 걸어서 10분 안이면 버스 조회 안 함 (호출 한도 아끼기)
   busState[p.id] = "loading";
   try {
     const url = `https://api.odsay.com/v1/api/searchPubTransPathT?SX=${SCHOOL.lng}&SY=${SCHOOL.lat}&EX=${p.lng}&EY=${p.lat}&OPT=0&SearchPathType=2&apiKey=${encodeURIComponent(CFG.odsayKey)}`;
@@ -1379,7 +1380,7 @@ async function ensureBus(p) {
         if (sp.trafficType === 2) {
           const st = sp.passStopList?.stations || [];
           return {
-            t: "bus", nos: (sp.lane || []).map((l) => String(l.busNo)).slice(0, 4),
+            t: "bus", nos: [...new Set((sp.lane || []).map((l) => String(l.busNo).replace(/\(.*?\)/g, "").trim()).filter(Boolean))].slice(0, 5),
             from: sp.startName || "", to: sp.endName || "", next: st[1]?.stationName || "",
             count: sp.stationCount || 0, min: sp.sectionTime || 0,
           };
@@ -1431,9 +1432,28 @@ function routeHtml(p) {
   const taxi = `<div class="route-row"><span class="route-tag taxi">택시</span><div class="route-body">
       <div class="main">약 ${t.minutes}분 · ${won(t.lo)}~${won(t.hi)}</div>
       <div class="sub">거리 약 ${t.km.toFixed(1)}km · 울산 택시요금 기준 추정 (밤 10시 이후 20% 할증)</div></div></div>`;
+  const refresh = r && isOfficer() && CFG.odsayKey
+    ? `<button class="btn ghost sm" type="button" data-route-refresh="${p.id}">버스 경로 새로 찾기</button>` : "";
   return `<div class="route-head">${esc(SCHOOL.name)}에서 가는 법</div>${bus}${taxi}
-    <a href="${kakaoRouteLink(p)}" target="_blank" rel="noopener">카카오맵 길찾기로 정확히 보기 ›</a>`;
+    <div class="row wrap" style="justify-content:space-between">
+      <a href="${kakaoRouteLink(p)}" target="_blank" rel="noopener">카카오맵 길찾기로 정확히 보기 ›</a>${refresh}
+    </div>`;
 }
+// 노선이 바뀌었을 때 회장·임원이 저장된 경로를 지우고 다시 찾기 (ODsay 하루 호출 한도를 아끼려고 평소엔 저장된 걸 씀)
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-route-refresh]");
+  if (!b) return;
+  const id = b.dataset.routeRefresh;
+  const p = S.places.find((x) => x.id === id);
+  if (!p) return;
+  b.disabled = true;
+  try {
+    await deleteDoc(doc(db, "routes", id));
+    delete S.routes[id]; delete busState[id];
+    await ensureBus(p);
+    toast("버스 경로를 새로 찾았어요");
+  } catch (err) { b.disabled = false; toast(errMsg(err)); }
+});
 
 // ============================================================
 //  오늘 뭐 먹지? (맛집 목록에서 뽑기)
