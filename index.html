@@ -80,6 +80,21 @@
           </button>
         </div>
 
+        <div class="card notice-card" id="notice-card" hidden>
+          <div class="card-head">
+            <h3>공지</h3>
+            <button class="btn ghost sm" type="button" id="notice-write-btn" hidden>공지 쓰기</button>
+          </div>
+          <div id="notice-list" class="notice-list"></div>
+          <form id="notice-form" class="stack tight" hidden>
+            <textarea id="notice-text" rows="2" maxlength="300" placeholder="예) 이번 주는 시험이라 쉬어요!" required></textarea>
+            <div class="row">
+              <button class="btn primary sm" type="submit">고정하기</button>
+              <button class="btn ghost sm" type="button" id="notice-cancel">취소</button>
+            </div>
+          </form>
+        </div>
+
         <div class="card plan-card">
           <div class="card-head">
             <h3>모임 계획</h3>
@@ -114,12 +129,44 @@
           <div id="rsvp-lists" class="rsvp-lists"></div>
         </div>
 
+        <div class="card" id="settle-card">
+          <div class="card-head">
+            <h3>N빵 정산</h3>
+            <button class="btn ghost sm" type="button" id="settle-edit-btn">정산 시작</button>
+          </div>
+          <div id="settle-view"></div>
+          <form id="settle-form" class="stack" hidden>
+            <label for="settle-total">총 금액 (원)</label>
+            <input id="settle-total" type="number" inputmode="numeric" min="0" step="10" placeholder="예) 48000" required>
+            <label for="settle-payer">먼저 계산한 사람</label>
+            <select id="settle-payer"></select>
+            <label>나눌 사람 <span class="muted small">(기본: 참석 누른 사람)</span></label>
+            <div id="settle-people" class="check-grid"></div>
+            <label for="settle-memo">보낼 곳 (선택)</label>
+            <input id="settle-memo" maxlength="100" placeholder="예) 토스 아이디, 카카오페이 송금 링크">
+            <div id="settle-preview" class="settle-preview"></div>
+            <div class="row wrap">
+              <button class="btn primary" type="submit">저장</button>
+              <button class="btn ghost" type="button" id="settle-cancel">취소</button>
+              <button class="btn danger" type="button" id="settle-delete" hidden>정산 지우기</button>
+            </div>
+          </form>
+        </div>
+
         <div class="card">
           <div class="card-head">
             <h3>다가오는 일정</h3>
             <button class="btn ghost sm" type="button" data-open-cal>캘린더</button>
           </div>
           <div id="home-schedule" class="mini-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>우리가 간 곳 <span id="history-count" class="muted"></span></h3>
+            <button class="btn ghost sm" type="button" id="history-open">전체 기록</button>
+          </div>
+          <div id="home-history" class="mini-list"></div>
         </div>
 
         <div class="card">
@@ -162,6 +209,7 @@
 
       <!-- ===== 대화 ===== -->
       <section id="view-chat" class="view chat-view" data-view="chat" hidden>
+        <button id="chat-notice" class="chat-notice" type="button" data-goto="home" hidden></button>
         <div id="chat-list" class="chat-list" aria-live="polite"></div>
         <form id="chat-form" class="chat-form">
           <textarea id="chat-input" rows="1" maxlength="500" placeholder="메시지 보내기" aria-label="메시지"></textarea>
@@ -181,6 +229,23 @@
           <button class="btn primary" type="submit">검색</button>
         </form>
         <div id="search-results" class="search-results" hidden></div>
+
+        <div class="card picker">
+          <div class="card-head">
+            <h3>오늘 뭐 먹지?</h3>
+            <span class="muted small" id="pick-pool"></span>
+          </div>
+          <div class="row wrap pick-filters">
+            <label class="chk"><input type="checkbox" id="pick-new"> 안 가 본 곳만</label>
+            <label class="chk"><input type="checkbox" id="pick-good"> 평점 4점 이상</label>
+            <select id="pick-cat" class="sm-select" aria-label="종류"><option value="">모든 종류</option></select>
+          </div>
+          <div id="pick-result" class="pick-result" aria-live="polite"></div>
+          <div class="row wrap">
+            <button class="btn primary" type="button" id="pick-go">뽑기</button>
+            <button class="btn ghost" type="button" id="pick-poll">후보 3개로 투표 만들기</button>
+          </div>
+        </div>
 
         <div id="place-detail" class="card place-detail" hidden>
           <div class="card-head">
@@ -376,6 +441,32 @@
           <button class="btn primary" type="submit">이 날에 추가</button>
         </form>
         <p id="sch-readonly" class="muted small" hidden>일정은 회장·임원만 추가하거나 지울 수 있어요.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 우리가 간 곳 기록 ===== -->
+  <div id="history" class="overlay" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="hist-title">
+      <div class="sheet-head">
+        <h3 id="hist-title">우리가 간 곳</h3>
+        <button class="icon-btn" data-close-history aria-label="닫기">×</button>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">모임 횟수</div><div class="stat-num" id="st-visits">0</div></div>
+        <div class="stat"><div class="stat-label">가 본 식당</div><div class="stat-num" id="st-places">0</div></div>
+      </div>
+      <div class="set-group">
+        <div class="set-label">제일 많이 간 곳</div>
+        <div id="st-top-places" class="rank-list"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-label">출석왕</div>
+        <div id="st-top-members" class="rank-list"></div>
+      </div>
+      <div class="set-group">
+        <div class="set-label">전체 기록</div>
+        <div id="hist-list" class="hist-list"></div>
       </div>
     </div>
   </div>

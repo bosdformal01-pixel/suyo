@@ -97,6 +97,8 @@ const S = {
   messages: [],
   places: [], reviews: [],
   invites: [],
+  notices: [], allYes: [],
+  settle: null, paid: {},
   selected: null, myStars: 0,
   tab: "home",
   lastPw: null, // 방금 로그인할 때 쓴 비밀번호 (비밀번호 변경 창에서 다시 묻지 않으려고 메모리에만 보관)
@@ -312,7 +314,7 @@ function stopApp() {
   Object.values(voteUnsubs).forEach((u) => u());
   for (const k of Object.keys(voteUnsubs)) delete voteUnsubs[k];
   stopInvites();
-  ["#pw-modal", "#settings", "#cal"].forEach((s) => ($(s).hidden = true));
+  ["#pw-modal", "#settings", "#cal", "#history"].forEach((s) => ($(s).hidden = true));
   $("#auth-pw").value = "";
   started = false;
   S.me = null; S.uid = null;
@@ -332,7 +334,7 @@ function startApp() {
       const keepPw = S.me?.mustChangePw === false ? { mustChangePw: false } : {};
       S.me = { ...S.members[S.uid], ...keepPw };
     }
-    renderMe(); renderHome(); renderMembers();
+    renderMe(); renderHome(); renderMembers(); renderSettle(); renderNotices(); renderHistory();
   }));
 
   subscribeWeek();
@@ -340,7 +342,17 @@ function startApp() {
   unsubs.push(onSnapshot(collection(db, "events"), (qs) => {
     S.allEvents = {};
     qs.forEach((d) => (S.allEvents[d.id] = d.data()));
-    renderCalendar();
+    renderCalendar(); renderHistory(); renderPicker();
+  }));
+
+  unsubs.push(onSnapshot(query(collection(db, "attendance"), where("status", "==", "yes")), (qs) => {
+    S.allYes = qs.docs.map((d) => d.data());
+    renderHistory();
+  }));
+
+  unsubs.push(onSnapshot(query(collection(db, "notices"), orderBy("createdAt", "desc"), limit(5)), (qs) => {
+    S.notices = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
+    renderNotices();
   }));
 
   unsubs.push(onSnapshot(collection(db, "schedule"), (qs) => {
@@ -397,7 +409,18 @@ function subscribeWeek() {
       S.event = d.exists() ? d.data(SNAP) : null;
       renderHome();
     }),
+    onSnapshot(doc(db, "settlements", S.wedKey), (d) => {
+      S.settle = d.exists() ? d.data(SNAP) : null;
+      renderSettle();
+    }),
+    onSnapshot(collection(db, "settlements", S.wedKey, "paid"), (qs) => {
+      S.paid = {};
+      qs.forEach((d) => (S.paid[d.id] = d.data()));
+      renderSettle();
+    }),
   ];
+  S.settle = null; S.paid = {};
+  closeSettleForm();
   renderHome();
 }
 
@@ -458,7 +481,8 @@ $("#set-logout").addEventListener("click", async () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!$("#cal").hidden) closeCal();
+  if (!$("#history").hidden) $("#history").hidden = true;
+  else if (!$("#cal").hidden) closeCal();
   else if (!$("#settings").hidden) closeSheet();
   else if (!$("#pw-modal").hidden && !$("#pw-cancel").hidden) $("#pw-modal").hidden = true;
 });
@@ -928,7 +952,10 @@ function renderChat() {
         out += `<div class="msg ${me ? "me" : ""}" data-id="${m.id}">
             ${!me && lastUid !== m.uid ? `<span class="who">${esc(memberName(m.uid, m.name))}${t ? ` · ${esc(t)}` : ""}</span>` : ""}
             <div class="line"><div class="bubble">${esc(m.text)}</div><span class="time">${hhmm(d)}</span>
-              ${canDel ? `<button class="del" data-delmsg="${m.id}" hidden>삭제</button>` : ""}</div>
+              ${canDel || isOfficer() ? `<span class="acts" hidden>
+                ${isOfficer() ? `<button class="pin" data-pinmsg="${m.id}">공지로</button>` : ""}
+                ${canDel ? `<button class="del" data-delmsg="${m.id}">삭제</button>` : ""}
+              </span>` : ""}</div>
           </div>`;
         lastUid = m.uid;
         return out;
@@ -944,9 +971,217 @@ $("#chat-list").addEventListener("click", async (e) => {
     try { await deleteDoc(doc(db, "messages", del.dataset.delmsg)); } catch (err) { toast(errMsg(err)); }
     return;
   }
+  const pin = e.target.closest("[data-pinmsg]");
+  if (pin) {
+    const m = S.messages.find((x) => x.id === pin.dataset.pinmsg);
+    if (m) await addNotice(m.text.slice(0, 300));
+    return;
+  }
   const msg = e.target.closest(".msg");
-  const btn = msg?.querySelector(".del");
-  if (btn) btn.hidden = !btn.hidden; // 말풍선을 누르면 삭제 버튼이 나와요
+  const acts = msg?.querySelector(".acts");
+  if (acts) acts.hidden = !acts.hidden; // 말풍선을 누르면 삭제/공지 버튼이 나와요
+});
+
+// ============================================================
+//  공지 고정 (회장·임원이 쓰고 해제)
+// ============================================================
+async function addNotice(text) {
+  try {
+    await addDoc(collection(db, "notices"), { text, createdBy: S.uid, createdByName: S.me.name, createdAt: serverTimestamp() });
+    toast("공지로 고정했어요");
+  } catch (err) { toast(errMsg(err)); }
+}
+function renderNotices() {
+  if (!S.me) return;
+  const list = S.notices.slice(0, 3);
+  const card = $("#notice-card");
+  card.hidden = !list.length && !isOfficer();
+  $("#notice-write-btn").hidden = !isOfficer() || !$("#notice-form").hidden;
+  $("#notice-list").innerHTML = list.length
+    ? list.map((n) => `
+        <div class="notice">
+          <div class="body"><div class="t">${esc(n.text)}</div><div class="by">${esc(memberName(n.createdBy, n.createdByName))} · ${ago(toDate(n.createdAt))}</div></div>
+          ${isOfficer() ? `<button class="btn ghost sm" type="button" data-unpin="${n.id}">내리기</button>` : ""}
+        </div>`).join("")
+    : '<div class="empty-note">고정된 공지가 없어요. 중요한 안내는 공지로 올려 두세요.</div>';
+  const top = list[0];
+  const banner = $("#chat-notice");
+  banner.hidden = !top;
+  if (top) banner.innerHTML = `<b>공지</b><span>${esc(top.text)}</span>`;
+}
+$("#notice-write-btn").addEventListener("click", () => { $("#notice-form").hidden = false; renderNotices(); $("#notice-text").focus(); });
+$("#notice-cancel").addEventListener("click", () => { $("#notice-form").hidden = true; renderNotices(); });
+$("#notice-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const text = $("#notice-text").value.trim();
+  if (!text) return;
+  await addNotice(text);
+  $("#notice-text").value = ""; $("#notice-form").hidden = true; renderNotices();
+});
+$("#notice-list").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-unpin]");
+  if (!b) return;
+  try { await deleteDoc(doc(db, "notices", b.dataset.unpin)); toast("공지를 내렸어요"); } catch (err) { toast(errMsg(err)); }
+});
+
+// ============================================================
+//  N빵 정산 (이번 주 모임 기준)
+// ============================================================
+const won = (n) => Number(n || 0).toLocaleString("ko-KR") + "원";
+function share(total, n) { return n ? Math.ceil(total / n / 10) * 10 : 0; } // 10원 단위 올림
+function settleCanEdit() { return !S.settle || S.settle.payer === S.uid || S.settle.updatedBy === S.uid || isOfficer(); }
+
+function renderSettle() {
+  if (!S.me || !$("#settle-form").hidden) return;
+  const st = S.settle;
+  const btn = $("#settle-edit-btn");
+  btn.textContent = st ? "수정" : "정산 시작";
+  btn.hidden = !!st && !settleCanEdit();
+  if (!st) {
+    $("#settle-view").innerHTML = '<div class="empty-note">모임이 끝나면 총 금액을 넣어 보세요. 나눌 금액을 계산해 주고, 누가 보냈는지 체크할 수 있어요.</div>';
+    return;
+  }
+  const people = st.participants || [];
+  const each = share(st.total, people.length);
+  const done = people.filter((u) => u === st.payer || S.paid[u]).length;
+  const pct = people.length ? Math.round((done / people.length) * 100) : 0;
+  const canMark = (u) => u === S.uid || st.payer === S.uid || isOfficer();
+  $("#settle-view").innerHTML = `
+    <div class="settle-sum"><span class="big">${won(each)}</span><span class="muted small">1인당 · 총 ${won(st.total)} ÷ ${people.length}명</span></div>
+    <div class="muted small">${esc(memberName(st.payer, st.payerName))} 님이 먼저 계산했어요 · ${done}/${people.length}명 완료</div>
+    <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
+    ${st.memo ? `<div class="settle-memo"><span>보낼 곳: ${esc(st.memo)}</span><button class="btn ghost sm" type="button" id="settle-copy">복사</button></div>` : ""}
+    <div class="pay-list">
+      ${people.map((u) => {
+        const isPayer = u === st.payer;
+        const on = isPayer || !!S.paid[u];
+        return `<div class="pay-row"><span>${esc(memberName(u))}${u === S.uid ? ' <span class="muted small">(나)</span>' : ""}</span>
+          <button class="pay-btn ${on ? "on" : ""}" type="button" data-pay="${u}" ${isPayer || !canMark(u) ? "disabled" : ""}>${isPayer ? "계산함" : on ? "보냄 ✓" : "아직"}</button></div>`;
+      }).join("")}
+    </div>`;
+}
+
+function openSettleForm() {
+  const st = S.settle;
+  const ids = Object.keys(S.members).sort((a, b) => memberName(a).localeCompare(memberName(b), "ko"));
+  const chosen = new Set(st?.participants || S.attendance.filter((a) => a.status === "yes").map((a) => a.uid));
+  if (!chosen.size) chosen.add(S.uid);
+  $("#settle-total").value = st?.total ?? "";
+  $("#settle-payer").innerHTML = ids.map((u) => `<option value="${u}" ${(st?.payer || S.uid) === u ? "selected" : ""}>${esc(memberName(u))}</option>`).join("");
+  $("#settle-people").innerHTML = ids.map((u) => `<label class="chk"><input type="checkbox" value="${u}" ${chosen.has(u) ? "checked" : ""}> ${esc(memberName(u))}</label>`).join("");
+  $("#settle-memo").value = st?.memo || "";
+  $("#settle-delete").hidden = !st;
+  $("#settle-form").hidden = false;
+  $("#settle-view").hidden = true;
+  $("#settle-edit-btn").hidden = true;
+  settlePreview();
+}
+function closeSettleForm() {
+  $("#settle-form").hidden = true;
+  $("#settle-view").hidden = false;
+  $("#settle-edit-btn").hidden = false;
+  renderSettle();
+}
+function settlePreview() {
+  const total = Math.max(0, Math.round(Number($("#settle-total").value) || 0));
+  const n = $$("#settle-people input:checked").length;
+  $("#settle-preview").textContent = n ? `${n}명이 ${won(share(total, n))}씩 (10원 단위 올림)` : "나눌 사람을 골라 주세요.";
+}
+$("#settle-edit-btn").addEventListener("click", openSettleForm);
+$("#settle-cancel").addEventListener("click", closeSettleForm);
+$("#settle-total").addEventListener("input", settlePreview);
+$("#settle-people").addEventListener("change", settlePreview);
+$("#settle-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const total = Math.max(0, Math.round(Number($("#settle-total").value) || 0));
+  const participants = $$("#settle-people input:checked").map((i) => i.value);
+  if (!participants.length) { toast("나눌 사람을 골라 주세요"); return; }
+  const payer = $("#settle-payer").value;
+  try {
+    await setDoc(doc(db, "settlements", S.wedKey), {
+      total, payer, payerName: memberName(payer), participants, memo: $("#settle-memo").value.trim(),
+      updatedBy: S.uid, updatedAt: serverTimestamp(),
+    });
+    closeSettleForm();
+    toast("정산을 저장했어요");
+  } catch (err) { toast(errMsg(err)); }
+});
+$("#settle-delete").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  if (btn.dataset.confirm !== "1") {
+    btn.dataset.confirm = "1"; btn.textContent = "정말 지우기?";
+    setTimeout(() => { btn.dataset.confirm = ""; btn.textContent = "정산 지우기"; }, 3000);
+    return;
+  }
+  try {
+    for (const u of Object.keys(S.paid)) await deleteDoc(doc(db, "settlements", S.wedKey, "paid", u)).catch(() => {});
+    await deleteDoc(doc(db, "settlements", S.wedKey));
+    closeSettleForm();
+    toast("정산을 지웠어요");
+  } catch (err) { toast(errMsg(err)); }
+});
+$("#settle-view").addEventListener("click", async (e) => {
+  if (e.target.closest("#settle-copy")) {
+    try { await navigator.clipboard.writeText(S.settle.memo); toast("복사했어요"); } catch { toast("복사가 안 돼요. 길게 눌러 직접 복사해 주세요."); }
+    return;
+  }
+  const b = e.target.closest("[data-pay]");
+  if (!b || b.disabled) return;
+  const u = b.dataset.pay;
+  const ref = doc(db, "settlements", S.wedKey, "paid", u);
+  try {
+    if (S.paid[u]) await deleteDoc(ref);
+    else await setDoc(ref, { by: S.uid, at: serverTimestamp() });
+  } catch (err) { toast(errMsg(err)); }
+});
+
+// ============================================================
+//  우리가 간 곳 (지난 수요일 기록 + 통계)
+// ============================================================
+function visits() {
+  const tk = dateKey(today0());
+  return Object.entries(S.allEvents)
+    .filter(([k, ev]) => k <= tk && ev.place)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([k, ev]) => ({ date: k, place: ev.place, who: S.allYes.filter((a) => a.date === k).map((a) => a.uid) }));
+}
+function visitedNames() { return new Set(visits().map((v) => v.place.trim())); }
+function renderHistory() {
+  if (!S.me) return;
+  const vs = visits();
+  $("#history-count").textContent = vs.length ? `${vs.length}번` : "";
+  $("#home-history").innerHTML = vs.length
+    ? vs.slice(0, 3).map((v) => `<button class="mini-item" type="button" data-hist><span class="t"><b>${esc(dayLabel(parseKey(v.date)))}</b> ${esc(v.place)}</span><span class="small muted">${v.who.length}명</span></button>`).join("")
+    : '<div class="empty-note">수요일 모임 장소를 정하면 여기에 기록이 쌓여요.</div>';
+  if (!$("#history").hidden) renderHistorySheet();
+}
+function renderHistorySheet() {
+  const vs = visits();
+  const byPlace = {}, byMember = {};
+  vs.forEach((v) => {
+    byPlace[v.place] = (byPlace[v.place] || 0) + 1;
+    v.who.forEach((u) => (byMember[u] = (byMember[u] || 0) + 1));
+  });
+  const rank = (obj, label) => Object.entries(obj).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  $("#st-visits").textContent = vs.length;
+  $("#st-places").textContent = Object.keys(byPlace).length;
+  const tp = rank(byPlace);
+  $("#st-top-places").innerHTML = tp.length
+    ? tp.map(([n, c], i) => `<div class="rank"><span class="no">${i + 1}</span><span class="nm">${esc(n)}</span><span class="ct">${c}번</span></div>`).join("")
+    : '<div class="rank"><span class="muted small">아직 기록이 없어요.</span></div>';
+  const tm = rank(byMember);
+  $("#st-top-members").innerHTML = tm.length
+    ? tm.map(([u, c], i) => `<div class="rank"><span class="no">${i + 1}</span><span class="nm">${esc(memberName(u))}</span><span class="ct">${c}/${vs.length}회</span></div>`).join("")
+    : '<div class="rank"><span class="muted small">참석을 누른 기록이 쌓이면 보여요.</span></div>';
+  $("#hist-list").innerHTML = vs.length
+    ? vs.map((v) => `<div class="hist"><span class="dt">${v.date.slice(2).replaceAll("-", ".")}</span><div class="body"><div><b>${esc(v.place)}</b></div><div class="who">${v.who.length ? v.who.map((u) => esc(memberName(u))).join(", ") : "참석 기록 없음"}</div></div></div>`).join("")
+    : '<div class="hist"><span class="muted small">아직 기록이 없어요.</span></div>';
+}
+function openHistory() { $("#history").hidden = false; renderHistorySheet(); }
+$("#history-open").addEventListener("click", openHistory);
+$("#home-history").addEventListener("click", (e) => { if (e.target.closest("[data-hist]")) openHistory(); });
+$("#history").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget || e.target.closest("[data-close-history]")) $("#history").hidden = true;
 });
 
 const chatInput = $("#chat-input");
@@ -1076,7 +1311,92 @@ function renderPlaces() {
         </button>`).join("")
     : '<div class="empty-note">아직 등록된 맛집이 없어요. 위 검색창에서 가 본 식당을 찾아 추가해 보세요.</div>';
   if (S.selected) renderDetail();
+  renderPicker();
 }
+
+// ============================================================
+//  오늘 뭐 먹지? (맛집 목록에서 뽑기)
+// ============================================================
+function pickPool() {
+  const onlyNew = $("#pick-new").checked, onlyGood = $("#pick-good").checked, cat = $("#pick-cat").value;
+  const visited = visitedNames();
+  return S.places.filter((p) => {
+    if (onlyNew && visited.has(p.name.trim())) return false;
+    if (onlyGood) { const s = stats(p.id); if (!s.count || s.avg < 4) return false; }
+    if (cat && p.category !== cat) return false;
+    return true;
+  });
+}
+function renderPicker() {
+  const sel = $("#pick-cat");
+  const cats = [...new Set(S.places.map((p) => p.category).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">모든 종류</option>' + cats.map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+  sel.value = cats.includes(cur) ? cur : "";
+  const n = pickPool().length;
+  $("#pick-pool").textContent = `후보 ${n}곳`;
+  if (!$("#pick-result").dataset.state) {
+    $("#pick-result").innerHTML = S.places.length
+      ? '<span class="muted">조건을 고르고 뽑기를 눌러 보세요.</span>'
+      : '<span class="muted">맛집을 먼저 추가하면 뽑기를 할 수 있어요.</span>';
+  }
+}
+["#pick-new", "#pick-good", "#pick-cat"].forEach((s) => $(s).addEventListener("change", renderPicker));
+
+function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+let rolling = false;
+$("#pick-go").addEventListener("click", async () => {
+  const pool = pickPool();
+  const box = $("#pick-result");
+  if (!pool.length) { toast("조건에 맞는 맛집이 없어요. 조건을 줄여 보세요."); return; }
+  if (rolling) return;
+  rolling = true;
+  box.dataset.state = "rolling";
+  box.className = "pick-result rolling";
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduce && pool.length > 1) {
+    for (let i = 0; i < 14; i++) {
+      box.innerHTML = `<span class="nm">${esc(pool[i % pool.length].name)}</span>`;
+      await new Promise((r) => setTimeout(r, 50 + i * 12));
+    }
+  }
+  const p = pool[Math.floor(Math.random() * pool.length)];
+  const s = stats(p.id);
+  box.className = "pick-result done";
+  box.dataset.state = "done";
+  box.innerHTML = `
+    <span class="nm">${esc(p.name)}</span>
+    <span class="muted small">${esc(p.category || "")}${s.count ? ` · ★ ${s.avg.toFixed(1)} (${s.count})` : " · 평점 없음"}${visitedNames().has(p.name.trim()) ? "" : " · 아직 안 가 봄"}</span>
+    <div class="row wrap">
+      <button class="btn ghost sm" type="button" data-pick-open="${p.id}">자세히</button>
+      <button class="btn primary sm" type="button" data-pick-plan="${p.id}">이번 주 장소로 정하기</button>
+    </div>`;
+  rolling = false;
+});
+$("#pick-result").addEventListener("click", async (e) => {
+  const o = e.target.closest("[data-pick-open]");
+  if (o) { selectPlace(o.dataset.pickOpen, true); return; }
+  const pl = e.target.closest("[data-pick-plan]");
+  if (pl) { S.selected = pl.dataset.pickPlan; $("#pd-plan").click(); }
+});
+$("#pick-poll").addEventListener("click", async () => {
+  const pool = pickPool();
+  if (pool.length < 2) { toast("후보가 2곳 이상 있어야 투표를 만들 수 있어요."); return; }
+  const options = shuffled(pool).slice(0, 3).map((p) => p.name.slice(0, 60));
+  const wed = wednesday(0);
+  try {
+    await addDoc(collection(db, "polls"), {
+      question: `${wed.getMonth() + 1}/${wed.getDate()} 어디 갈까? (뽑기 후보)`, options,
+      createdBy: S.uid, createdByName: S.me.name, createdAt: serverTimestamp(), closed: false,
+    });
+    toast("후보 투표를 올렸어요");
+    showTab("polls");
+  } catch (err) { toast(errMsg(err)); }
+});
 $("#place-sort").addEventListener("change", renderPlaces);
 $("#place-list").addEventListener("click", (e) => {
   const c = e.target.closest("[data-place]");

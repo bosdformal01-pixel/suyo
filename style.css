@@ -460,6 +460,66 @@ label { font-size: .85rem; font-weight: 600; }
 .sch-item .n { font-size: .82rem; color: var(--muted); overflow-wrap: anywhere; }
 .sch-date { flex: none; font-size: .78rem; font-weight: 700; color: var(--accent); min-width: 64px; font-variant-numeric: tabular-nums; }
 
+/* ---------- 공지 ---------- */
+.notice-card { border-color: var(--accent); background: var(--accent-soft); }
+.notice-list { display: flex; flex-direction: column; gap: 8px; }
+.notice { display: flex; gap: 10px; align-items: flex-start; }
+.notice .body { flex: 1; min-width: 0; }
+.notice .t { font-weight: 600; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice .by { font-size: .75rem; color: var(--muted); }
+.notice + .notice { border-top: 1px solid var(--line); padding-top: 8px; }
+.chat-notice {
+  position: sticky; top: calc(53px + env(safe-area-inset-top)); z-index: 15;
+  display: flex; gap: 8px; align-items: center; width: 100%; text-align: left;
+  background: var(--accent-soft); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 9px 12px; margin-bottom: 8px; cursor: pointer; font-size: .88rem;
+}
+.chat-notice b { color: var(--accent); flex: none; }
+.chat-notice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg .acts { display: flex; gap: 2px; }
+.msg .pin { font-size: .72rem; border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 4px; font-weight: 700; }
+
+/* ---------- N빵 정산 ---------- */
+.check-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.chk { display: inline-flex; align-items: center; gap: 6px; font-size: .85rem; font-weight: 500; cursor: pointer; }
+.chk input { width: auto; margin: 0; accent-color: var(--accent); }
+.check-grid .chk { background: var(--surface-2); border: 1px solid var(--line); border-radius: 99px; padding: 4px 10px; }
+.settle-preview { font-size: .88rem; color: var(--muted); }
+.settle-sum { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.settle-sum .big { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.settle-memo { font-size: .85rem; background: var(--surface-2); border-radius: 8px; padding: 8px 10px; display: flex; gap: 8px; align-items: center; justify-content: space-between; overflow-wrap: anywhere; }
+.pay-list { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+.pay-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pay-btn { border: 1.5px solid var(--line); background: var(--surface); border-radius: 99px; padding: 4px 12px; font-size: .8rem; font-weight: 700; cursor: pointer; color: var(--muted); }
+.pay-btn.on { border-color: var(--yes); background: var(--yes-soft); color: var(--yes); }
+.pay-btn:disabled { cursor: default; }
+.progress { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--yes); }
+
+/* ---------- 기록 / 통계 ---------- */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+.stat-label { font-size: .75rem; color: var(--muted); font-weight: 700; }
+.stat-num { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rank-list, .hist-list { display: flex; flex-direction: column; }
+.rank, .hist { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.rank .no { width: 22px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.rank .nm, .hist .body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rank .ct { font-size: .82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.hist .dt { flex: none; width: 62px; font-size: .78rem; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.hist .who { font-size: .78rem; color: var(--muted); }
+
+/* ---------- 뽑기 ---------- */
+.pick-filters { gap: 12px; }
+.pick-result {
+  min-height: 76px; border-radius: 12px; background: var(--surface-2); border: 1px dashed var(--line);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 12px; text-align: center;
+}
+.pick-result .nm { font-family: var(--font-display); font-size: 1.5rem; line-height: 1.2; overflow-wrap: anywhere; }
+.pick-result.rolling .nm { color: var(--muted); }
+.pick-result.done { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
+.pick-result .row { margin-top: 4px; justify-content: center; }
+
 /* ---------- 토스트 ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
