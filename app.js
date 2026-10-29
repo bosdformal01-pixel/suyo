@@ -1,11 +1,14 @@
 // ============================================================
-//  수요미식회 — 메인 스크립트
-//  (설정값은 config.js, 권한 규칙은 firestore.rules 에 있어요)
+//  수요미식회 — 메인 스크립트 (v2)
+//  설정값은 config.js, 권한 규칙은 firestore.rules 에 있어요.
 // ============================================================
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import {
-  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc,
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  signOut, updatePassword, reauthenticateWithCredential, linkWithCredential, EmailAuthProvider, deleteUser
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, addDoc, writeBatch, deleteField,
   collection, query, where, orderBy, limit, onSnapshot, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
@@ -13,13 +16,13 @@ const CFG = window.SUYO_CONFIG || {};
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const STATUS = { yes: "참석", maybe: "미정", no: "불참" };
 const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
+const ROLE_LABEL = { admin: "회장", officer: "임원", member: "멤버" };
 
 // ---------- 공통 화면 도우미 ----------
 function gateError(msg) {
   $("#gate-loading").hidden = true;
-  $("#join-form").hidden = true;
+  $("#auth-box").hidden = true;
   const el = $("#gate-error");
   el.textContent = msg;
   el.hidden = false;
@@ -30,27 +33,26 @@ function toast(msg) {
   t.textContent = msg;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 2200);
+  toastTimer = setTimeout(() => (t.hidden = true), 2400);
 }
 function errMsg(e) {
   console.error(e);
-  if (e?.code === "permission-denied") return "권한이 없어요. 다시 시도해 주세요.";
+  if (e?.code === "permission-denied") return "권한이 없어요.";
   if (e?.code === "unavailable") return "인터넷 연결을 확인해 주세요.";
   return "문제가 생겼어요. 잠시 후 다시 시도해 주세요.";
 }
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* 무시 */ } };
+const lsDel = (k) => { try { localStorage.removeItem(k); } catch { /* 무시 */ } };
 
 // ---------- 날짜 ----------
 function dateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-function wednesday(offsetWeeks = 0) {
-  const now = new Date();
-  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  d.setDate(d.getDate() + ((3 - d.getDay() + 7) % 7) + offsetWeeks * 7); // 오늘 이후 가장 가까운 수요일
-  return d;
-}
+function parseKey(k) { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); }
+function today0() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); }
+function nextWedFrom(d) { const x = new Date(d); x.setDate(x.getDate() + ((3 - x.getDay() + 7) % 7)); return x; }
+function wednesday(offsetWeeks = 0) { const d = nextWedFrom(today0()); d.setDate(d.getDate() + offsetWeeks * 7); return d; }
 function toDate(ts) { return ts?.toDate ? ts.toDate() : null; }
 function hhmm(d) { return d ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : ""; }
 function dayLabel(d) { return `${d.getMonth() + 1}월 ${d.getDate()}일 (${DAYS[d.getDay()]})`; }
@@ -63,9 +65,19 @@ function ago(d) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// ---------- 화면 모드 (자동 / 라이트 / 나이트) ----------
+function applyTheme(v) {
+  if (v === "light" || v === "dark") { document.documentElement.setAttribute("data-theme", v); lsSet("suyo-theme", v); }
+  else { document.documentElement.removeAttribute("data-theme"); lsDel("suyo-theme"); }
+  const cur = lsGet("suyo-theme") || "auto";
+  $$("#theme-seg button").forEach((b) => b.classList.toggle("on", b.dataset.themeVal === cur));
+}
+$$("#theme-seg button").forEach((b) => b.addEventListener("click", () => applyTheme(b.dataset.themeVal)));
+applyTheme(lsGet("suyo-theme") || "auto");
+
 // ---------- 설정 확인 ----------
 if (!CFG.firebase || !CFG.firebase.apiKey || !CFG.firebase.projectId) {
-  gateError("아직 설정이 안 됐어요.\nconfig.js 파일에 Firebase 설정값을 넣어 주세요.\n(README.md 2단계 참고)");
+  gateError("아직 설정이 안 됐어요.\nconfig.js 파일에 Firebase 설정값을 넣어 주세요.");
   throw new Error("config.js 미설정");
 }
 
@@ -79,58 +91,211 @@ const S = {
   uid: null, me: null,
   members: {},
   weekOffset: 0, wedKey: dateKey(wednesday(0)),
-  attendance: [], event: null,
+  attendance: [], event: null, allEvents: {},
+  schedule: [],
   polls: [], votes: {},
   messages: [],
   places: [], reviews: [],
+  invites: [],
   selected: null, myStars: 0,
   tab: "home",
+  lastPw: null, // 방금 로그인할 때 쓴 비밀번호 (비밀번호 변경 창에서 다시 묻지 않으려고 메모리에만 보관)
 };
-const isAdmin = () => S.me?.role === "admin";
+const myRole = () => S.me?.role || "member";
+const isAdmin = () => myRole() === "admin";
+const isOfficer = () => ["admin", "officer"].includes(myRole());
+const memberName = (uid, fallback) => S.members[uid]?.name || fallback || "알 수 없음";
 
 // ============================================================
-//  로그인 / 입장
+//  로그인: 닉네임 + 비밀번호
+//  (닉네임을 내부용 이메일 주소로 바꿔서 Firebase 로그인을 써요. 사용자는 이메일을 몰라도 돼요.)
 // ============================================================
+function normName(name) { return name.trim().normalize("NFC").toLowerCase(); }
+async function loginEmail(name) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("suyo:" + normName(name)));
+  const hex = [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 32);
+  return `m${hex}@suyo-misikhoe.app`;
+}
+
+let authMode = "login";
+function setAuthMode(m) {
+  authMode = m;
+  $("#mode-login").classList.toggle("on", m === "login");
+  $("#mode-join").classList.toggle("on", m === "join");
+  $("#join-extra").hidden = m !== "join";
+  $("#auth-code").required = m === "join";
+  $("#auth-pw-label").textContent = m === "join" ? "초대 코드 (회장에게 받은 초기 비밀번호)" : "비밀번호";
+  $("#auth-pw").type = m === "join" ? "text" : "password";
+  $("#auth-pw").autocomplete = m === "join" ? "off" : "current-password";
+  $("#auth-submit").textContent = m === "join" ? "가입하기" : "로그인";
+  $("#auth-hint").textContent = m === "join"
+    ? "가입하면 바로 새 비밀번호를 정하는 창이 떠요. 그다음부터는 닉네임 + 새 비밀번호로 로그인해요."
+    : "가입할 때 쓴 닉네임과 비밀번호로 어느 기기에서나 로그인할 수 있어요.";
+}
+$("#mode-login").addEventListener("click", () => setAuthMode("login"));
+$("#mode-join").addEventListener("click", () => setAuthMode("join"));
+
+function showAuth(msg) {
+  $("#gate").hidden = false;
+  $("#app").hidden = true;
+  $("#gate-loading").hidden = true;
+  $("#gate-error").hidden = true;
+  $("#auth-box").hidden = false;
+  if (msg) toast(msg);
+  setTimeout(() => $("#auth-name").focus(), 50);
+}
+
+let registering = false;
 onAuthStateChanged(auth, async (user) => {
-  if (!user) {
-    try { await signInAnonymously(auth); }
-    catch (e) {
-      console.error(e);
-      gateError("로그인을 할 수 없어요.\nFirebase 콘솔 > Authentication > 로그인 방법에서\n'익명'을 사용 설정했는지 확인해 주세요.");
-    }
-    return;
-  }
+  if (registering) return; // 가입 처리 중에는 가입 코드가 직접 이어서 처리해요
+  if (!user) { stopApp(); showAuth(); return; }
+  await enterWithUser(user);
+});
+
+async function enterWithUser(user) {
   S.uid = user.uid;
   try {
     const snap = await getDoc(doc(db, "members", user.uid));
-    if (snap.exists()) { S.me = snap.data(); startApp(); }
-    else showJoin();
+    if (!snap.exists()) {
+      await signOut(auth);
+      showAuth(user.isAnonymous ? "로그인 방식이 바뀌었어요. '처음이에요' 탭에서 초대 코드로 가입해 주세요." : "멤버 정보가 없어요. 회장에게 문의해 주세요.");
+      return;
+    }
+    S.me = snap.data();
+    startApp();
+    if (user.isAnonymous) openPw("migrate");
+    else if (S.me.mustChangePw) openPw("forced");
   } catch (e) {
     console.error(e);
-    gateError("데이터베이스에 연결할 수 없어요.\nFirestore를 만들고 firestore.rules 규칙을 게시했는지 확인해 주세요.");
+    gateError("데이터베이스에 연결할 수 없어요.\nFirestore 규칙(firestore.rules)을 게시했는지 확인해 주세요.");
+  }
+}
+
+$("#auth-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("#auth-name").value.trim();
+  const rawPw = $("#auth-pw").value;
+  const pw = authMode === "join" ? rawPw.trim() : rawPw;
+  if (!name || !pw) return;
+  const btn = $("#auth-submit");
+  btn.disabled = true;
+  try {
+    const email = await loginEmail(name);
+    if (authMode === "login") await doLogin(email, pw);
+    else await doJoin(name, email, pw, $("#auth-code").value.trim());
+  } finally {
+    btn.disabled = false;
   }
 });
 
-function showJoin() {
-  $("#gate-loading").hidden = true;
-  $("#join-form").hidden = false;
-  $("#join-name").focus();
+async function doLogin(email, pw) {
+  try {
+    S.lastPw = pw;
+    await signInWithEmailAndPassword(auth, email, pw); // 성공하면 onAuthStateChanged 가 이어서 처리
+  } catch (err) {
+    S.lastPw = null;
+    console.error(err);
+    if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-email"].includes(err.code))
+      toast("닉네임 또는 비밀번호가 맞지 않아요. 처음이면 '처음이에요' 탭을 눌러 주세요.");
+    else if (err.code === "auth/too-many-requests") toast("너무 많이 틀렸어요. 잠시 후 다시 시도해 주세요.");
+    else if (err.code === "auth/operation-not-allowed") toast("Firebase에서 '이메일/비밀번호' 로그인을 켜 주세요.");
+    else toast(errMsg(err));
+  }
 }
 
-$("#join-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const name = $("#join-name").value.trim();
-  const code = $("#join-code").value.trim();
-  if (!name || !code) return;
-  const btn = e.submitter || $("#join-form button");
-  btn.disabled = true;
+async function doJoin(name, email, invite, joinCode) {
+  if (invite.length < 6) { toast("초대 코드를 다시 확인해 주세요."); return; }
+  if (!joinCode) { toast("입장 코드를 입력해 주세요."); return; }
+  registering = true;
+  let cred;
   try {
-    await setDoc(doc(db, "members", S.uid), { uid: S.uid, name, joinCode: code, joinedAt: serverTimestamp() });
-    S.me = (await getDoc(doc(db, "members", S.uid))).data();
-    startApp();
+    cred = await createUserWithEmailAndPassword(auth, email, invite);
+  } catch (err) {
+    registering = false;
+    console.error(err);
+    if (err.code === "auth/email-already-in-use") toast("이미 가입된 닉네임이에요. 로그인 탭에서 로그인하거나 다른 닉네임을 써 주세요.");
+    else if (err.code === "auth/operation-not-allowed") toast("Firebase에서 '이메일/비밀번호' 로그인을 켜 주세요.");
+    else toast(errMsg(err));
+    return;
+  }
+  const uid = cred.user.uid;
+  try {
+    const b = writeBatch(db);
+    b.set(doc(db, "members", uid), { uid, name, joinCode, invite, mustChangePw: true, joinedAt: serverTimestamp() });
+    b.update(doc(db, "invites", invite), { usedBy: uid, usedByName: name, usedAt: serverTimestamp() });
+    await b.commit();
   } catch (err) {
     console.error(err);
-    toast(err?.code === "permission-denied" ? "입장 코드가 맞지 않아요." : errMsg(err));
+    await deleteUser(cred.user).catch(() => signOut(auth)); // 실패하면 만든 계정을 지워서 닉네임을 다시 쓸 수 있게
+    registering = false;
+    toast("초대 코드나 입장 코드가 맞지 않아요. (이미 사용된 초대 코드일 수도 있어요)");
+    return;
+  }
+  registering = false;
+  S.lastPw = invite;
+  await enterWithUser(cred.user);
+}
+
+// ============================================================
+//  비밀번호 창 (첫 로그인 강제 변경 / 직접 변경 / 예전 계정 전환)
+// ============================================================
+let pwMode = "change";
+function openPw(mode) {
+  pwMode = mode;
+  const forced = mode === "forced" || mode === "migrate";
+  const titles = {
+    forced: ["새 비밀번호를 정해 주세요", "초대 코드는 처음 한 번만 쓰는 비밀번호예요. 앞으로 쓸 내 비밀번호로 바꿔야 사이트를 쓸 수 있어요."],
+    migrate: ["새 로그인 방식으로 바꿔요", `앞으로는 닉네임 '${S.me?.name}'과 비밀번호로 어느 기기에서나 로그인해요. 사용할 비밀번호를 정해 주세요.`],
+    change: ["비밀번호 바꾸기", "지금 비밀번호를 한 번 더 확인해요."],
+  };
+  $("#pw-title").textContent = titles[mode][0];
+  $("#pw-desc").textContent = titles[mode][1];
+  const needCur = mode === "change" || (mode === "forced" && !S.lastPw);
+  $("#pw-cur-wrap").hidden = !needCur;
+  $("#pw-cur").required = needCur;
+  $("#pw-cur").previousElementSibling.textContent = mode === "forced" ? "초대 코드 (지금 비밀번호)" : "지금 비밀번호";
+  $("#pw-cancel").hidden = forced;
+  $("#pw-err").hidden = true;
+  ["#pw-cur", "#pw-new", "#pw-new2"].forEach((s) => ($(s).value = ""));
+  $("#pw-modal").hidden = false;
+  setTimeout(() => $(needCur ? "#pw-cur" : "#pw-new").focus(), 50);
+}
+function pwError(msg) { const el = $("#pw-err"); el.textContent = msg; el.hidden = false; }
+$("#pw-cancel").addEventListener("click", () => ($("#pw-modal").hidden = true));
+$("#set-pw").addEventListener("click", () => { closeSheet(); openPw(auth.currentUser?.isAnonymous ? "migrate" : "change"); });
+
+$("#pw-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const cur = $("#pw-cur-wrap").hidden ? S.lastPw : $("#pw-cur").value;
+  const npw = $("#pw-new").value, npw2 = $("#pw-new2").value;
+  if (npw.length < 6) return pwError("새 비밀번호는 6자 이상이어야 해요.");
+  if (npw !== npw2) return pwError("새 비밀번호 두 칸이 서로 달라요.");
+  if (cur && npw === cur) return pwError("지금 비밀번호와 다른 비밀번호로 정해 주세요.");
+  const btn = $("#pw-submit");
+  btn.disabled = true;
+  const user = auth.currentUser;
+  try {
+    if (pwMode === "migrate") {
+      await linkWithCredential(user, EmailAuthProvider.credential(await loginEmail(S.me.name), npw));
+    } else {
+      await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, cur));
+      await updatePassword(user, npw);
+      if (S.me.mustChangePw || S.me.invite) {
+        await updateDoc(doc(db, "members", S.uid), { mustChangePw: false, invite: deleteField() });
+        S.me.mustChangePw = false; delete S.me.invite;
+      }
+    }
+    S.lastPw = null;
+    $("#pw-modal").hidden = true;
+    toast(pwMode === "migrate" ? "전환 완료! 이제 닉네임 + 비밀번호로 로그인해요" : "비밀번호를 바꿨어요");
+  } catch (err) {
+    console.error(err);
+    if (["auth/invalid-credential", "auth/wrong-password"].includes(err.code)) pwError("지금 비밀번호가 맞지 않아요.");
+    else if (err.code === "auth/weak-password") pwError("더 어려운 비밀번호로 정해 주세요. (6자 이상)");
+    else if (err.code === "auth/email-already-in-use" || err.code === "auth/credential-already-in-use") pwError("같은 닉네임으로 된 계정이 이미 있어요. 회장에게 문의해 주세요.");
+    else if (err.code === "auth/operation-not-allowed") pwError("Firebase에서 '이메일/비밀번호' 로그인을 먼저 켜 주세요.");
+    else if (err.code === "auth/requires-recent-login") { pwError("보안을 위해 다시 로그인해 주세요."); setTimeout(() => signOut(auth), 1500); }
+    else pwError(errMsg(err));
   } finally {
     btn.disabled = false;
   }
@@ -139,45 +304,83 @@ $("#join-form").addEventListener("submit", async (e) => {
 // ============================================================
 //  앱 시작 & 실시간 구독
 // ============================================================
+let unsubs = [];
 let started = false;
+function stopApp() {
+  unsubs.forEach((u) => u()); unsubs = [];
+  weekUnsubs.forEach((u) => u()); weekUnsubs = [];
+  Object.values(voteUnsubs).forEach((u) => u());
+  for (const k of Object.keys(voteUnsubs)) delete voteUnsubs[k];
+  stopInvites();
+  ["#pw-modal", "#settings", "#cal"].forEach((s) => ($(s).hidden = true));
+  $("#auth-pw").value = "";
+  started = false;
+  S.me = null; S.uid = null;
+}
+
 function startApp() {
   if (started) return;
   started = true;
   $("#gate").hidden = true;
   $("#app").hidden = false;
-  $("#me-chip").textContent = S.me.name + (isAdmin() ? " · 회장" : "");
+  renderMe();
 
-  onSnapshot(collection(db, "members"), (qs) => {
+  unsubs.push(onSnapshot(collection(db, "members"), (qs) => {
     S.members = {};
     qs.forEach((d) => (S.members[d.id] = d.data()));
-    renderHome();
-  });
+    if (S.members[S.uid]) {
+      const keepPw = S.me?.mustChangePw === false ? { mustChangePw: false } : {};
+      S.me = { ...S.members[S.uid], ...keepPw };
+    }
+    renderMe(); renderHome(); renderMembers();
+  }));
 
   subscribeWeek();
 
-  onSnapshot(query(collection(db, "polls"), orderBy("createdAt", "desc"), limit(30)), (qs) => {
+  unsubs.push(onSnapshot(collection(db, "events"), (qs) => {
+    S.allEvents = {};
+    qs.forEach((d) => (S.allEvents[d.id] = d.data()));
+    renderCalendar();
+  }));
+
+  unsubs.push(onSnapshot(collection(db, "schedule"), (qs) => {
+    S.schedule = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) })).sort((a, b) => a.date.localeCompare(b.date));
+    renderHome(); renderCalendar();
+  }));
+
+  unsubs.push(onSnapshot(query(collection(db, "polls"), orderBy("createdAt", "desc"), limit(30)), (qs) => {
     S.polls = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
     syncVoteSubs();
     renderPolls(); renderHome();
-  });
+  }));
 
-  onSnapshot(query(collection(db, "messages"), orderBy("createdAt", "desc"), limit(200)), (qs) => {
+  unsubs.push(onSnapshot(query(collection(db, "messages"), orderBy("createdAt", "desc"), limit(200)), (qs) => {
     S.messages = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) })).reverse();
     renderChat(); renderHome();
-  });
+  }));
 
-  onSnapshot(collection(db, "places"), (qs) => {
+  unsubs.push(onSnapshot(collection(db, "places"), (qs) => {
     S.places = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
     renderPlaces(); renderPlaceOptions();
-  });
+  }));
 
-  onSnapshot(collection(db, "reviews"), (qs) => {
+  unsubs.push(onSnapshot(collection(db, "reviews"), (qs) => {
     S.reviews = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
     renderPlaces();
-  });
+  }));
 
   const start = location.hash.replace("#", "");
   showTab(["home", "polls", "chat", "places"].includes(start) ? start : "home");
+}
+
+function renderMe() {
+  if (!S.me) return;
+  const title = S.me.title || (S.me.role === "admin" ? "회장" : S.me.role === "officer" ? "임원" : "");
+  $("#me-name").textContent = S.me.name;
+  $("#me-title").textContent = title;
+  $("#set-title").textContent = S.me.name;
+  $("#set-sub").textContent = [title, ROLE_LABEL[myRole()] !== title ? ROLE_LABEL[myRole()] + " 권한" : ""].filter(Boolean).join(" · ") || "멤버";
+  $("#admin-group").hidden = !isAdmin();
 }
 
 let weekUnsubs = [];
@@ -229,6 +432,151 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => showTab(t.dataset.ta
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
   if (g) showTab(g.dataset.goto);
+  if (e.target.closest("[data-open-cal]")) openCal();
+});
+
+// ============================================================
+//  설정 시트 (이름 버튼)
+// ============================================================
+function openSheet() { showPage("main"); $("#settings").hidden = false; }
+function closeSheet() { $("#settings").hidden = true; }
+function showPage(p) {
+  $$("#settings .sheet-page").forEach((el) => (el.hidden = el.dataset.page !== p));
+  if (p === "invites") startInvites();
+  if (p === "members") renderMembers();
+}
+$("#me-btn").addEventListener("click", openSheet);
+$("#settings").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget || e.target.closest("[data-close-sheet]")) closeSheet();
+  const go = e.target.closest("[data-page-go]");
+  if (go) showPage(go.dataset.pageGo);
+});
+$("#set-logout").addEventListener("click", async () => {
+  if (auth.currentUser?.isAnonymous) { toast("먼저 '비밀번호 바꾸기'로 새 로그인 방식으로 바꿔 주세요."); return; }
+  closeSheet();
+  await signOut(auth);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#cal").hidden) closeCal();
+  else if (!$("#settings").hidden) closeSheet();
+  else if (!$("#pw-modal").hidden && !$("#pw-cancel").hidden) $("#pw-modal").hidden = true;
+});
+
+// 멤버 목록 / 역할 관리
+function renderMembers() {
+  const list = $("#mem-list");
+  if (!list) return;
+  const rows = Object.entries(S.members).sort(([, a], [, b]) => {
+    const order = { admin: 0, officer: 1, member: 2 };
+    return (order[a.role || "member"] - order[b.role || "member"]) || a.name.localeCompare(b.name, "ko");
+  });
+  $("#mem-count").textContent = `${rows.length}명`;
+  $("#mem-help").textContent = isAdmin()
+    ? "역할: 회장은 모든 관리, 임원은 캘린더 일정 관리를 할 수 있어요. 직책은 이름 옆에 보이는 글자예요. (예: 맛집부 장관)"
+    : "누가 어떤 직책인지 볼 수 있어요.";
+  list.innerHTML = rows.map(([uid, m]) => {
+    const role = m.role || "member";
+    const tag = `<span class="role-tag ${role}">${esc(m.title || ROLE_LABEL[role])}</span>`;
+    const edit = isAdmin() ? `
+      <div class="mem-edit" data-uid="${uid}">
+        <select aria-label="${esc(m.name)} 역할">
+          ${["member", "officer", "admin"].map((r) => `<option value="${r}" ${r === role ? "selected" : ""}>${ROLE_LABEL[r]}</option>`).join("")}
+        </select>
+        <input maxlength="20" placeholder="직책 (예: 맛집부 장관)" value="${esc(m.title || "")}" aria-label="${esc(m.name)} 직책">
+        <button class="btn primary sm" type="button" data-save-mem>저장</button>
+        ${uid !== S.uid ? `<button class="btn danger sm" type="button" data-del-mem>내보내기</button>` : ""}
+      </div>` : "";
+    return `<div class="mem-row"><span class="nm">${esc(m.name)}${uid === S.uid ? ' <span class="muted small">(나)</span>' : ""}</span>${tag}${edit}</div>`;
+  }).join("");
+}
+$("#mem-list").addEventListener("click", async (e) => {
+  const box = e.target.closest(".mem-edit");
+  if (!box) return;
+  const uid = box.dataset.uid;
+  if (e.target.closest("[data-save-mem]")) {
+    const role = box.querySelector("select").value;
+    const title = box.querySelector("input").value.trim();
+    if (uid === S.uid && role !== "admin") {
+      const others = Object.entries(S.members).filter(([id, m]) => id !== S.uid && m.role === "admin");
+      if (!others.length) { toast("회장이 한 명은 있어야 해요. 다른 사람을 먼저 회장으로 정해 주세요."); return; }
+    }
+    try {
+      await updateDoc(doc(db, "members", uid), { role, title });
+      toast(`${memberName(uid)} 님 정보를 저장했어요`);
+    } catch (err) { toast(errMsg(err)); }
+  }
+  const del = e.target.closest("[data-del-mem]");
+  if (del) {
+    if (del.dataset.confirm !== "1") {
+      del.dataset.confirm = "1"; del.textContent = "정말 내보내기?";
+      setTimeout(() => { del.dataset.confirm = ""; del.textContent = "내보내기"; }, 3000);
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "members", uid));
+      toast("멤버에서 내보냈어요. 같은 닉네임을 다시 쓰려면 Firebase Authentication에서 계정도 지워 주세요.");
+    } catch (err) { toast(errMsg(err)); }
+  }
+});
+
+// 초대 코드 관리 (회장 전용)
+let invUnsub = null;
+function startInvites() {
+  if (invUnsub || !isAdmin()) return;
+  invUnsub = onSnapshot(collection(db, "invites"), (qs) => {
+    S.invites = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }))
+      .sort((a, b) => (a.usedBy ? 1 : 0) - (b.usedBy ? 1 : 0) || a.id.localeCompare(b.id));
+    renderInvites();
+  }, (err) => toast(errMsg(err)));
+}
+function stopInvites() { if (invUnsub) { invUnsub(); invUnsub = null; } }
+function renderInvites() {
+  const unused = S.invites.filter((i) => !i.usedBy);
+  $("#inv-count").textContent = `전체 ${S.invites.length}개 · 안 쓴 코드 ${unused.length}개`;
+  $("#inv-list").innerHTML = S.invites.length
+    ? S.invites.map((i) => `
+        <div class="inv-row ${i.usedBy ? "used" : ""}">
+          <code>${esc(i.id)}</code>
+          <span class="st">${i.usedBy ? `${esc(i.usedByName || memberName(i.usedBy))} 님 사용` : "안 씀"}</span>
+          ${i.usedBy ? "" : `<button class="btn ghost sm" type="button" data-del-inv="${esc(i.id)}">삭제</button>`}
+        </div>`).join("")
+    : '<div class="inv-row"><span class="muted small">아직 초대 코드가 없어요. 위에서 추가해 주세요.</span></div>';
+}
+function randomCode() {
+  const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // 헷갈리는 글자(0,o,1,l,i) 제외
+  const a = new Uint32Array(6); crypto.getRandomValues(a);
+  return "suyo-" + [...a].map((n) => chars[n % chars.length]).join("");
+}
+$("#inv-gen").addEventListener("click", () => {
+  $("#inv-input").value = Array.from({ length: 15 }, randomCode).join("\n");
+});
+$("#inv-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const codes = [...new Set($("#inv-input").value.split(/\s+/).map((s) => s.trim()).filter(Boolean))];
+  const bad = codes.filter((c) => c.length < 6 || c.length > 30 || c.includes("/") || c === "." || c === "..");
+  if (!codes.length) return;
+  if (bad.length) { toast(`6~30자, '/' 없이 만들어 주세요: ${bad.slice(0, 3).join(", ")}`); return; }
+  const dup = codes.filter((c) => S.invites.some((i) => i.id === c));
+  if (dup.length) { toast(`이미 있는 코드예요: ${dup.slice(0, 3).join(", ")}`); return; }
+  try {
+    const b = writeBatch(db);
+    codes.forEach((c) => b.set(doc(db, "invites", c), { createdAt: serverTimestamp(), usedBy: null, usedByName: "", usedAt: null }));
+    await b.commit();
+    $("#inv-input").value = "";
+    toast(`초대 코드 ${codes.length}개를 추가했어요`);
+  } catch (err) { toast(errMsg(err)); }
+});
+$("#inv-list").addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-del-inv]");
+  if (!del) return;
+  try { await deleteDoc(doc(db, "invites", del.dataset.delInv)); } catch (err) { toast(errMsg(err)); }
+});
+$("#inv-copy").addEventListener("click", async () => {
+  const text = S.invites.filter((i) => !i.usedBy).map((i) => i.id).join("\n");
+  if (!text) { toast("안 쓴 코드가 없어요"); return; }
+  try { await navigator.clipboard.writeText(text); toast("안 쓴 코드를 복사했어요"); }
+  catch { $("#inv-input").value = text; $("#inv-input").select(); toast("복사가 안 돼서 입력칸에 넣어 뒀어요. 직접 복사해 주세요."); }
 });
 
 // ============================================================
@@ -240,25 +588,26 @@ $("#week-next").addEventListener("click", () => { S.weekOffset++; closePlanForm(
 function renderHome() {
   if (!S.me) return;
   const wed = wednesday(S.weekOffset);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
-  const diff = Math.round((wed - today) / 86400000);
+  const diff = Math.round((wed - today0()) / 86400000);
   $("#week-date").textContent = dayLabel(wed);
   $("#week-dday").textContent = diff === 0 ? "오늘 모임!" : diff > 0 ? `D-${diff}` : `${-diff}일 전 모임`;
 
   // 계획
   const ev = S.event;
   const updated = ev?.updatedByName ? `<div class="plan-foot">${esc(ev.updatedByName)} 님이 ${ago(toDate(ev.updatedAt))} 수정</div>` : "";
+  const sameDay = S.schedule.filter((s) => s.date === S.wedKey);
   $("#plan-view").innerHTML = `
     <dt>장소</dt><dd class="${ev?.place ? "" : "empty"}">${esc(ev?.place || "아직 안 정했어요")}</dd>
     <dt>시간</dt><dd class="${ev?.time ? "" : "empty"}">${esc(ev?.time || CFG.defaultTime || "미정")}</dd>
     ${ev?.note ? `<dt>메모</dt><dd>${esc(ev.note)}</dd>` : ""}
+    ${sameDay.length ? `<dt>일정</dt><dd>${sameDay.map((s) => esc(s.title)).join(", ")}</dd>` : ""}
     ${updated}`;
 
   // 참석
   const mine = S.attendance.find((a) => a.uid === S.uid)?.status;
   $$(".rsvp").forEach((b) => b.classList.toggle("on", b.dataset.status === mine));
   const groups = { yes: [], maybe: [], no: [] };
-  S.attendance.forEach((a) => groups[a.status]?.push(S.members[a.uid]?.name || a.name));
+  S.attendance.forEach((a) => groups[a.status]?.push(memberName(a.uid, a.name)));
   const answered = new Set(S.attendance.map((a) => a.uid));
   const none = Object.entries(S.members).filter(([id]) => !answered.has(id)).map(([, m]) => m.name);
   const row = (cls, label, arr) => `
@@ -267,6 +616,13 @@ function renderHome() {
     </div>`;
   $("#rsvp-lists").innerHTML = row("yes", "참석", groups.yes) + row("maybe", "미정", groups.maybe) + row("no", "불참", groups.no) + row("none", "무응답", none);
   $("#rsvp-summary").textContent = `멤버 ${Object.keys(S.members).length}명 중 ${S.attendance.length}명 응답`;
+
+  // 다가오는 일정
+  const tk = dateKey(today0());
+  const up = S.schedule.filter((s) => s.date >= tk).slice(0, 3);
+  $("#home-schedule").innerHTML = up.length
+    ? up.map((s) => `<button class="mini-item" data-open-cal="${s.date}"><span class="t"><b>${esc(dayLabel(parseKey(s.date)))}</b> ${esc(s.title)}</span><span class="small muted">›</span></button>`).join("")
+    : `<div class="empty-note">예정된 일정이 없어요.${isOfficer() ? " 캘린더에서 날짜를 눌러 추가할 수 있어요." : ""}</div>`;
 
   // 진행 중 투표
   const open = S.polls.filter((p) => !p.closed).slice(0, 4);
@@ -280,7 +636,7 @@ function renderHome() {
   // 최근 대화
   const last = S.messages.slice(-3);
   $("#home-chat").innerHTML = last.length
-    ? last.map((m) => `<button class="mini-item" data-goto="chat"><span class="t"><b>${esc(m.name)}</b> ${esc(m.text)}</span><span class="small muted">${ago(toDate(m.createdAt))}</span></button>`).join("")
+    ? last.map((m) => `<button class="mini-item" data-goto="chat"><span class="t"><b>${esc(memberName(m.uid, m.name))}</b> ${esc(m.text)}</span><span class="small muted">${ago(toDate(m.createdAt))}</span></button>`).join("")
     : '<div class="empty-note">아직 대화가 없어요. 첫 메시지를 남겨 보세요.</div>';
 }
 
@@ -297,9 +653,9 @@ $$(".rsvp").forEach((b) =>
 );
 
 // 계획 수정
-function openPlanForm(prefillPlace) {
+function openPlanForm() {
   const ev = S.event || {};
-  $("#plan-place").value = prefillPlace ?? ev.place ?? "";
+  $("#plan-place").value = ev.place ?? "";
   $("#plan-time").value = ev.time || CFG.defaultTime || "";
   $("#plan-note").value = ev.note || "";
   $("#plan-form").hidden = false;
@@ -311,7 +667,7 @@ function closePlanForm() {
   $("#plan-view").hidden = false;
   $("#plan-edit-btn").hidden = false;
 }
-$("#plan-edit-btn").addEventListener("click", () => openPlanForm());
+$("#plan-edit-btn").addEventListener("click", openPlanForm);
 $("#plan-cancel").addEventListener("click", closePlanForm);
 $("#plan-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -326,6 +682,107 @@ function savePlan(place, time, note) {
     place, time, note, updatedBy: S.uid, updatedByName: S.me.name, updatedAt: serverTimestamp(),
   });
 }
+
+// ============================================================
+//  캘린더 (보기는 모두, 일정 추가/삭제는 회장·임원)
+// ============================================================
+const CAL = { y: 0, m: 0, sel: null };
+function openCal(dateStr) {
+  const base = dateStr ? parseKey(dateStr) : wednesday(S.weekOffset);
+  CAL.y = base.getFullYear(); CAL.m = base.getMonth();
+  CAL.sel = dateKey(base);
+  $("#cal").hidden = false;
+  renderCalendar();
+}
+function closeCal() { $("#cal").hidden = true; }
+$("#cal-open").addEventListener("click", () => openCal());
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-open-cal]");
+  if (t && t.dataset.openCal) { e.stopImmediatePropagation(); openCal(t.dataset.openCal); }
+}, true);
+$("#cal").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget || e.target.closest("[data-close-cal]")) closeCal();
+});
+$("#cal-prev").addEventListener("click", () => { CAL.m--; if (CAL.m < 0) { CAL.m = 11; CAL.y--; } renderCalendar(); });
+$("#cal-next").addEventListener("click", () => { CAL.m++; if (CAL.m > 11) { CAL.m = 0; CAL.y++; } renderCalendar(); });
+
+function renderCalendar() {
+  if ($("#cal").hidden) return;
+  $("#cal-title").textContent = `${CAL.y}년 ${CAL.m + 1}월`;
+  const first = new Date(CAL.y, CAL.m, 1);
+  const start = new Date(first); start.setDate(1 - first.getDay());
+  const tk = dateKey(today0());
+  const schDates = new Set(S.schedule.map((s) => s.date));
+  let html = "";
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    if (i >= 35 && d.getMonth() !== CAL.m) break; // 6번째 줄이 다음 달뿐이면 생략
+    const k = dateKey(d);
+    const cls = ["cal-cell", d.getMonth() !== CAL.m && "out", d.getDay() === 3 && "wed", k === tk && "today", k === CAL.sel && "sel"].filter(Boolean).join(" ");
+    const dots = `${S.allEvents[k]?.place ? '<i class="dot meet"></i>' : ""}${schDates.has(k) ? '<i class="dot sch"></i>' : ""}`;
+    html += `<button type="button" class="${cls}" data-day="${k}" aria-label="${dayLabel(d)}"><span>${d.getDate()}</span><span class="dots">${dots}</span></button>`;
+  }
+  $("#cal-grid").innerHTML = html;
+  renderCalDay();
+}
+$("#cal-grid").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-day]");
+  if (!c) return;
+  CAL.sel = c.dataset.day;
+  const d = parseKey(CAL.sel);
+  if (d.getMonth() !== CAL.m) { CAL.y = d.getFullYear(); CAL.m = d.getMonth(); }
+  renderCalendar();
+});
+
+function renderCalDay() {
+  const k = CAL.sel;
+  if (!k) return;
+  const d = parseKey(k);
+  $("#cal-day-title").textContent = dayLabel(d);
+  const ev = S.allEvents[k];
+  $("#cal-day-plan").textContent = d.getDay() === 3
+    ? (ev?.place ? `모임 장소: ${ev.place}${ev.time ? " · " + ev.time : ""}` : "수요일 모임 — 장소 미정")
+    : "";
+  $("#cal-goweek").textContent = d.getDay() === 3 ? "이 날 모임 보기" : "이 주 모임 보기";
+  const items = S.schedule.filter((s) => s.date === k);
+  $("#cal-day-list").innerHTML = items.length
+    ? items.map((s) => `
+        <div class="sch-item">
+          <div class="body"><div class="t">${esc(s.title)}</div>${s.note ? `<div class="n">${esc(s.note)}</div>` : ""}<div class="n">${esc(s.createdByName || "")}</div></div>
+          ${isOfficer() ? `<button class="btn ghost sm" type="button" data-del-sch="${s.id}">삭제</button>` : ""}
+        </div>`).join("")
+    : '<div class="empty-note">이 날 일정이 없어요.</div>';
+  $("#sch-form").hidden = !isOfficer();
+  $("#sch-readonly").hidden = isOfficer();
+}
+$("#cal-goweek").addEventListener("click", () => {
+  const target = nextWedFrom(parseKey(CAL.sel));
+  S.weekOffset = Math.round((target - wednesday(0)) / (7 * 86400000));
+  closeCal(); closePlanForm(); subscribeWeek(); showTab("home");
+});
+$("#sch-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const title = $("#sch-title").value.trim();
+  if (!title || !CAL.sel) return;
+  try {
+    await addDoc(collection(db, "schedule"), {
+      date: CAL.sel, title, note: $("#sch-note").value.trim(),
+      createdBy: S.uid, createdByName: S.me.name, updatedAt: serverTimestamp(),
+    });
+    $("#sch-title").value = ""; $("#sch-note").value = "";
+    toast("일정을 추가했어요");
+  } catch (err) { toast(errMsg(err)); }
+});
+$("#cal-day-list").addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-del-sch]");
+  if (!del) return;
+  if (del.dataset.confirm !== "1") {
+    del.dataset.confirm = "1"; del.textContent = "정말 삭제?";
+    setTimeout(() => { del.dataset.confirm = ""; del.textContent = "삭제"; }, 3000);
+    return;
+  }
+  try { await deleteDoc(doc(db, "schedule", del.dataset.delSch)); toast("일정을 삭제했어요"); } catch (err) { toast(errMsg(err)); }
+});
 
 // ============================================================
 //  투표
@@ -390,7 +847,7 @@ function renderPolls() {
       return `<button class="poll-opt ${my === i ? "mine" : ""}" data-poll="${p.id}" data-choice="${i}" ${p.closed ? "disabled" : ""}>
           <span class="bar" style="width:${pct}%"></span>
           <span class="top"><span>${win ? '<b class="win-tag">1위</b> ' : ""}${esc(opt)}${my === i ? " ✓" : ""}</span><span class="cnt">${who.length}표 · ${pct}%</span></span>
-          ${who.length ? `<span class="who">${who.map((v) => esc(S.members[v.uid]?.name || v.name)).join(", ")}</span>` : ""}
+          ${who.length ? `<span class="who">${who.map((v) => esc(memberName(v.uid, v.name))).join(", ")}</span>` : ""}
         </button>`;
     }).join("");
     return `<article class="card">
@@ -425,7 +882,7 @@ $("#poll-list").addEventListener("click", async (e) => {
       const p = S.polls.find((x) => x.id === cl.dataset.close);
       await updateDoc(doc(db, "polls", p.id), { closed: !p.closed });
     } else if (del) {
-      if (del.dataset.confirm !== "1") { // 실수 방지: 두 번 눌러야 삭제
+      if (del.dataset.confirm !== "1") {
         del.dataset.confirm = "1"; del.textContent = "정말 삭제?";
         setTimeout(() => { del.dataset.confirm = ""; del.textContent = "삭제"; }, 3000);
         return;
@@ -467,8 +924,9 @@ function renderChat() {
         if (day !== lastDay) { out += `<div class="chat-day">${dayLabel(d)}</div>`; lastDay = day; lastUid = ""; }
         const me = m.uid === S.uid;
         const canDel = me || isAdmin();
+        const t = S.members[m.uid]?.title;
         out += `<div class="msg ${me ? "me" : ""}" data-id="${m.id}">
-            ${!me && lastUid !== m.uid ? `<span class="who">${esc(S.members[m.uid]?.name || m.name)}</span>` : ""}
+            ${!me && lastUid !== m.uid ? `<span class="who">${esc(memberName(m.uid, m.name))}${t ? ` · ${esc(t)}` : ""}</span>` : ""}
             <div class="line"><div class="bubble">${esc(m.text)}</div><span class="time">${hhmm(d)}</span>
               ${canDel ? `<button class="del" data-delmsg="${m.id}" hidden>삭제</button>` : ""}</div>
           </div>`;
@@ -488,7 +946,7 @@ $("#chat-list").addEventListener("click", async (e) => {
   }
   const msg = e.target.closest(".msg");
   const btn = msg?.querySelector(".del");
-  if (btn) btn.hidden = !btn.hidden; // 내 말풍선을 누르면 삭제 버튼이 나와요
+  if (btn) btn.hidden = !btn.hidden; // 말풍선을 누르면 삭제 버튼이 나와요
 });
 
 const chatInput = $("#chat-input");
@@ -541,7 +999,8 @@ async function initMap() {
   if (mapInitStarted) return;
   mapInitStarted = true;
   if (!CFG.kakaoJsKey) {
-    mapMsg("카카오 지도 키가 아직 없어요.\nconfig.js에 kakaoJsKey를 넣으면 지도가 보여요.\n(README.md 3단계 참고)");
+    mapMsg("카카오 지도 키가 아직 없어요.\nconfig.js에 kakaoJsKey를 넣으면 지도가 보여요.");
+    mapInitStarted = false;
     return;
   }
   mapMsg("지도를 불러오는 중…");
@@ -703,7 +1162,7 @@ function renderDetail() {
   $("#review-delete").hidden = !mine;
   $("#pd-reviews").innerHTML = rs
     .sort((a, b) => (toDate(b.at)?.getTime() || 0) - (toDate(a.at)?.getTime() || 0))
-    .map((r) => `<div class="review"><div class="hd"><b>${esc(S.members[r.uid]?.name || r.name)}</b>${starsHtml(r.stars)}<span class="muted small">${ago(toDate(r.at))}</span></div>${r.text ? `<p>${esc(r.text)}</p>` : ""}</div>`)
+    .map((r) => `<div class="review"><div class="hd"><b>${esc(memberName(r.uid, r.name))}</b>${starsHtml(r.stars)}<span class="muted small">${ago(toDate(r.at))}</span></div>${r.text ? `<p>${esc(r.text)}</p>` : ""}</div>`)
     .join("");
 }
 $("#pd-close").addEventListener("click", () => { S.selected = null; $("#place-detail").hidden = true; renderPlaces(); });

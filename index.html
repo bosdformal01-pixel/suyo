@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>수요미식회</title>
   <meta name="theme-color" content="#0f6f78">
+  <script>
+    // 저장해 둔 화면 모드(라이트/다크)를 깜빡임 없이 먼저 적용
+    try { var t = localStorage.getItem("suyo-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
@@ -12,7 +16,7 @@
 </head>
 <body>
 
-  <!-- 로딩 / 오류 / 입장 화면 -->
+  <!-- ===== 로그인 / 가입 ===== -->
   <div id="gate" class="gate">
     <div class="gate-card">
       <div class="logo-mark big" aria-hidden="true">水</div>
@@ -22,25 +26,38 @@
       <div id="gate-loading" class="gate-msg">불러오는 중…</div>
       <div id="gate-error" class="gate-msg error" hidden></div>
 
-      <form id="join-form" class="join-form" hidden autocomplete="off">
-        <label for="join-name">닉네임</label>
-        <input id="join-name" maxlength="12" placeholder="예) 떡볶이장인" required>
-        <label for="join-code">입장 코드</label>
-        <input id="join-code" placeholder="회장에게 받은 코드" required>
-        <button class="btn primary wide" type="submit">입장하기</button>
-        <p class="hint">처음 한 번만 입력하면 돼요. 같은 폰·같은 브라우저로 접속하면 계속 로그인돼 있어요.</p>
-      </form>
+      <div id="auth-box" class="auth-box" hidden>
+        <div class="seg" role="tablist" aria-label="로그인 방식">
+          <button type="button" role="tab" class="on" data-mode="login" id="mode-login">로그인</button>
+          <button type="button" role="tab" data-mode="join" id="mode-join">처음이에요</button>
+        </div>
+        <form id="auth-form" class="join-form" autocomplete="on">
+          <label for="auth-name">닉네임</label>
+          <input id="auth-name" maxlength="12" placeholder="예) 떡볶이장인" autocomplete="username" required>
+          <label for="auth-pw" id="auth-pw-label">비밀번호</label>
+          <input id="auth-pw" type="password" autocomplete="current-password" required>
+          <div id="join-extra" class="stack tight" hidden>
+            <label for="auth-code">입장 코드</label>
+            <input id="auth-code" placeholder="동아리 입장 코드" autocomplete="off">
+          </div>
+          <button class="btn primary wide" type="submit" id="auth-submit">로그인</button>
+          <p class="hint" id="auth-hint">가입할 때 쓴 닉네임과 비밀번호로 어느 기기에서나 로그인할 수 있어요.</p>
+        </form>
+      </div>
     </div>
   </div>
 
-  <!-- 메인 앱 -->
+  <!-- ===== 메인 앱 ===== -->
   <div id="app" class="app" hidden>
     <header class="topbar">
       <div class="brand">
         <span class="logo-mark" aria-hidden="true">水</span>
         <span class="wordmark small">수요미식회</span>
       </div>
-      <span id="me-chip" class="me-chip"></span>
+      <button id="me-btn" class="me-btn" type="button" aria-haspopup="dialog" aria-label="내 설정 열기">
+        <span class="me-text"><b id="me-name"></b><span id="me-title" class="me-title"></span></span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5z"/></svg>
+      </button>
     </header>
 
     <main class="views">
@@ -48,12 +65,19 @@
       <!-- ===== 홈: 이번 주 수요일 ===== -->
       <section id="view-home" class="view" data-view="home">
         <div class="week-nav">
-          <button class="icon-btn" id="week-prev" aria-label="이전 주">‹</button>
-          <div class="week-title">
-            <div id="week-dday" class="eyebrow"></div>
-            <h2 id="week-date"></h2>
+          <span aria-hidden="true"></span>
+          <div class="week-center">
+            <button class="icon-btn" id="week-prev" aria-label="이전 주">‹</button>
+            <div class="week-title">
+              <div id="week-dday" class="eyebrow"></div>
+              <h2 id="week-date"></h2>
+            </div>
+            <button class="icon-btn" id="week-next" aria-label="다음 주">›</button>
           </div>
-          <button class="icon-btn" id="week-next" aria-label="다음 주">›</button>
+          <button class="cal-btn" id="cal-open" type="button" aria-label="캘린더 열기">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zm-2 7h14v10H5zm2 2v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2z"/></svg>
+            <span>캘린더</span>
+          </button>
         </div>
 
         <div class="card plan-card">
@@ -88,6 +112,14 @@
             <button class="rsvp no" data-status="no">불참</button>
           </div>
           <div id="rsvp-lists" class="rsvp-lists"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>다가오는 일정</h3>
+            <button class="btn ghost sm" type="button" data-open-cal>캘린더</button>
+          </div>
+          <div id="home-schedule" class="mini-list"></div>
         </div>
 
         <div class="card">
@@ -215,6 +247,137 @@
         <span>맛집</span>
       </button>
     </nav>
+  </div>
+
+  <!-- ===== 설정 시트 (이름 버튼) ===== -->
+  <div id="settings" class="overlay" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="set-title">
+      <!-- 메인 메뉴 -->
+      <div class="sheet-page" data-page="main">
+        <div class="sheet-head">
+          <div>
+            <h3 id="set-title"></h3>
+            <div id="set-sub" class="muted small"></div>
+          </div>
+          <button class="icon-btn" data-close-sheet aria-label="닫기">×</button>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label">화면 모드</div>
+          <div class="seg" id="theme-seg" role="radiogroup" aria-label="화면 모드">
+            <button type="button" data-theme-val="auto">자동</button>
+            <button type="button" data-theme-val="light">라이트</button>
+            <button type="button" data-theme-val="dark">나이트</button>
+          </div>
+        </div>
+
+        <div class="set-group">
+          <div class="set-label">계정</div>
+          <button class="set-item" type="button" id="set-pw">비밀번호 바꾸기<span>›</span></button>
+          <button class="set-item" type="button" data-page-go="members">멤버 목록<span>›</span></button>
+        </div>
+
+        <div class="set-group" id="admin-group" hidden>
+          <div class="set-label">회장 전용</div>
+          <button class="set-item" type="button" data-page-go="invites">초대 코드 관리<span>›</span></button>
+        </div>
+
+        <button class="btn ghost wide" type="button" id="set-logout">로그아웃</button>
+      </div>
+
+      <!-- 멤버 목록 / 역할 관리 -->
+      <div class="sheet-page" data-page="members" hidden>
+        <div class="sheet-head">
+          <button class="icon-btn" data-page-go="main" aria-label="뒤로">‹</button>
+          <h3>멤버 목록 <span id="mem-count" class="muted"></span></h3>
+          <span></span>
+        </div>
+        <p class="muted small" id="mem-help"></p>
+        <div id="mem-list" class="mem-list"></div>
+      </div>
+
+      <!-- 초대 코드 관리 -->
+      <div class="sheet-page" data-page="invites" hidden>
+        <div class="sheet-head">
+          <button class="icon-btn" data-page-go="main" aria-label="뒤로">‹</button>
+          <h3>초대 코드 관리</h3>
+          <span></span>
+        </div>
+        <p class="muted small">초대 코드는 그 사람의 <b>초기 비밀번호</b>예요. 한 사람당 하나씩 주고, 한 번 쓰면 다시 못 써요. (6자 이상)</p>
+        <form id="inv-form" class="stack">
+          <label for="inv-input">새 초대 코드 (한 줄에 하나씩)</label>
+          <textarea id="inv-input" rows="4" placeholder="suyo-0001&#10;suyo-0002&#10;…"></textarea>
+          <div class="row wrap">
+            <button class="btn primary" type="submit">추가</button>
+            <button class="btn ghost" type="button" id="inv-gen">15개 자동 만들기</button>
+          </div>
+        </form>
+        <div class="row" style="justify-content:space-between">
+          <span id="inv-count" class="muted small"></span>
+          <button class="btn ghost sm" type="button" id="inv-copy">안 쓴 코드 복사</button>
+        </div>
+        <div id="inv-list" class="inv-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 비밀번호 창 ===== -->
+  <div id="pw-modal" class="overlay center" hidden>
+    <form id="pw-form" class="modal stack" role="dialog" aria-modal="true" aria-labelledby="pw-title">
+      <h3 id="pw-title">비밀번호 바꾸기</h3>
+      <p id="pw-desc" class="muted small"></p>
+      <div id="pw-cur-wrap" class="stack tight">
+        <label for="pw-cur">지금 비밀번호</label>
+        <input id="pw-cur" type="password" autocomplete="current-password">
+      </div>
+      <label for="pw-new">새 비밀번호 (6자 이상)</label>
+      <input id="pw-new" type="password" autocomplete="new-password" minlength="6" required>
+      <label for="pw-new2">새 비밀번호 확인</label>
+      <input id="pw-new2" type="password" autocomplete="new-password" minlength="6" required>
+      <p id="pw-err" class="err-text" hidden></p>
+      <div class="row">
+        <button class="btn primary" type="submit" id="pw-submit">바꾸기</button>
+        <button class="btn ghost" type="button" id="pw-cancel">취소</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ===== 캘린더 ===== -->
+  <div id="cal" class="overlay" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cal-title">
+      <div class="sheet-head">
+        <button class="icon-btn" id="cal-prev" aria-label="이전 달">‹</button>
+        <h3 id="cal-title"></h3>
+        <div class="row">
+          <button class="icon-btn" id="cal-next" aria-label="다음 달">›</button>
+          <button class="icon-btn" data-close-cal aria-label="닫기">×</button>
+        </div>
+      </div>
+      <div class="cal-grid cal-dow" aria-hidden="true">
+        <span>일</span><span>월</span><span>화</span><span class="wed">수</span><span>목</span><span>금</span><span>토</span>
+      </div>
+      <div id="cal-grid" class="cal-grid"></div>
+      <div class="cal-legend muted small">
+        <span><i class="dot meet"></i>모임 장소 정해짐</span>
+        <span><i class="dot sch"></i>일정</span>
+      </div>
+
+      <div id="cal-day" class="cal-day">
+        <div class="card-head">
+          <h3 id="cal-day-title"></h3>
+          <button class="btn ghost sm" type="button" id="cal-goweek">이 주 모임 보기</button>
+        </div>
+        <div id="cal-day-plan" class="muted small"></div>
+        <div id="cal-day-list" class="stack tight"></div>
+        <form id="sch-form" class="stack tight" hidden>
+          <label for="sch-title">일정 추가</label>
+          <input id="sch-title" maxlength="40" placeholder="예) 중간고사 기간 — 이번 주 쉼" required>
+          <input id="sch-note" maxlength="200" placeholder="메모 (선택)">
+          <button class="btn primary" type="submit">이 날에 추가</button>
+        </form>
+        <p id="sch-readonly" class="muted small" hidden>일정은 회장·임원만 추가하거나 지울 수 있어요.</p>
+      </div>
+    </div>
   </div>
 
   <div id="toast" class="toast" role="status" hidden></div>
