@@ -5,6 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>수요미식회</title>
   <meta name="theme-color" content="#0f6f78">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="수요미식회">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <script>
     // 저장해 둔 화면 모드(라이트/다크)를 깜빡임 없이 먼저 적용
     try { var t = localStorage.getItem("suyo-theme"); if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
@@ -143,8 +150,7 @@
             <select id="settle-payer"></select>
             <label>나눌 사람 <span class="muted small">(기본: 참석 누른 사람)</span></label>
             <div id="settle-people" class="check-grid"></div>
-            <label for="settle-memo">보낼 곳 (선택)</label>
-            <input id="settle-memo" maxlength="100" placeholder="예) 토스 아이디, 카카오페이 송금 링크">
+            <div id="settle-account-note" class="muted small"></div>
             <div id="settle-preview" class="settle-preview"></div>
             <div class="row wrap">
               <button class="btn primary" type="submit">저장</button>
@@ -152,6 +158,14 @@
               <button class="btn danger" type="button" id="settle-delete" hidden>정산 지우기</button>
             </div>
           </form>
+        </div>
+
+        <div class="card" id="fine-card">
+          <div class="card-head">
+            <h3>욕설 벌금 <span id="fine-total" class="muted"></span></h3>
+            <span class="muted small" id="fine-rule"></span>
+          </div>
+          <div id="fine-view"></div>
         </div>
 
         <div class="card">
@@ -213,6 +227,10 @@
         <button id="chat-notice" class="chat-notice" type="button" data-goto="home" hidden></button>
         <div id="chat-list" class="chat-list" aria-live="polite"></div>
         <form id="chat-form" class="chat-form">
+          <label class="photo-btn" for="chat-photo" aria-label="사진 보내기" title="사진 보내기">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/></svg>
+          </label>
+          <input id="chat-photo" type="file" accept="image/*" hidden>
           <textarea id="chat-input" rows="1" maxlength="500" placeholder="메시지 보내기" aria-label="메시지"></textarea>
           <button class="btn primary" type="submit" aria-label="보내기">보내기</button>
         </form>
@@ -266,13 +284,14 @@
           </div>
 
           <form id="review-form" class="review-form stack">
-            <label>내 평점</label>
-            <div class="star-input" id="star-input" role="radiogroup" aria-label="별점">
-              <button type="button" data-v="1" aria-label="1점">★</button>
-              <button type="button" data-v="2" aria-label="2점">★</button>
-              <button type="button" data-v="3" aria-label="3점">★</button>
-              <button type="button" data-v="4" aria-label="4점">★</button>
-              <button type="button" data-v="5" aria-label="5점">★</button>
+            <label>내 별점</label>
+            <div class="rate-row big">
+              <div class="hstars" data-key="overall" role="slider" aria-label="별점" aria-valuemin="0" aria-valuemax="5" tabindex="0"></div>
+              <span class="rate-step">
+                <button type="button" class="icon-btn" data-step="-0.1" aria-label="0.1점 내리기">−</button>
+                <span class="rate-val" data-val-for="overall">-</span>
+                <button type="button" class="icon-btn" data-step="0.1" aria-label="0.1점 올리기">+</button>
+              </span>
             </div>
             <textarea id="review-text" rows="2" maxlength="300" placeholder="한줄평 (선택) 예) 양 많고 소스 최고"></textarea>
             <div class="row">
@@ -340,12 +359,14 @@
 
         <div class="set-group">
           <div class="set-label">계정</div>
+          <button class="set-item" type="button" id="set-install">앱으로 설치하기<span>›</span></button>
           <button class="set-item" type="button" id="set-pw">비밀번호 바꾸기<span>›</span></button>
           <button class="set-item" type="button" data-page-go="members">멤버 목록<span>›</span></button>
         </div>
 
         <div class="set-group" id="admin-group" hidden>
           <div class="set-label">회장 전용</div>
+          <button class="set-item" type="button" data-page-go="club">동아리 설정 (정산 계좌·벌금)<span>›</span></button>
           <button class="set-item" type="button" data-page-go="invites">초대 코드 관리<span>›</span></button>
         </div>
 
@@ -361,6 +382,29 @@
         </div>
         <p class="muted small" id="mem-help"></p>
         <div id="mem-list" class="mem-list"></div>
+      </div>
+
+      <!-- 동아리 설정 (회장 전용) -->
+      <div class="sheet-page" data-page="club" hidden>
+        <div class="sheet-head">
+          <button class="icon-btn" data-page-go="main" aria-label="뒤로">‹</button>
+          <h3>동아리 설정</h3>
+          <span></span>
+        </div>
+        <form id="club-form" class="stack">
+          <p class="muted small">여기 적은 내용은 <b>로그인한 멤버에게만</b> 보여요. 사이트 코드(GitHub)에는 들어가지 않아요.</p>
+          <label for="club-bank">정산·벌금 받을 은행</label>
+          <input id="club-bank" maxlength="20" placeholder="예) 토스뱅크">
+          <label for="club-acct">계좌번호</label>
+          <input id="club-acct" maxlength="30" inputmode="numeric" placeholder="예) 1234-5678-9012" autocomplete="off">
+          <label for="club-holder">예금주 (선택)</label>
+          <input id="club-holder" maxlength="20" placeholder="예) 한찬욱">
+          <label for="club-fine">욕설 벌금 (1건당, 원)</label>
+          <input id="club-fine" type="number" min="0" step="10" inputmode="numeric">
+          <label for="club-words">금지어 목록 <span class="muted small">(쉼표나 줄바꿈으로 구분)</span></label>
+          <textarea id="club-words" rows="5"></textarea>
+          <button class="btn primary wide" type="submit">저장</button>
+        </form>
       </div>
 
       <!-- 초대 코드 관리 -->
@@ -470,6 +514,26 @@
         <div class="set-label">전체 기록</div>
         <div id="hist-list" class="hist-list"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== 사진 크게 보기 ===== -->
+  <div id="photo-view" class="overlay center" hidden>
+    <figure class="photo-fig">
+      <img id="photo-img" alt="보낸 사진">
+      <figcaption class="row" style="justify-content:space-between">
+        <span id="photo-cap" class="small"></span>
+        <button class="btn ghost sm" type="button" data-close-photo>닫기</button>
+      </figcaption>
+    </figure>
+  </div>
+
+  <!-- ===== 앱 설치 안내 ===== -->
+  <div id="install-modal" class="overlay center" hidden>
+    <div class="modal stack" role="dialog" aria-modal="true" aria-labelledby="inst-title">
+      <h3 id="inst-title">앱으로 설치하기</h3>
+      <div id="inst-body" class="stack tight small"></div>
+      <button class="btn primary" type="button" id="inst-close">확인</button>
     </div>
   </div>
 

@@ -535,6 +535,44 @@ label { font-size: .85rem; font-weight: 600; }
 .bus-no { display: inline-block; background: var(--yes); color: var(--bg); border-radius: 5px; padding: 0 6px; font-weight: 700; font-size: .8rem; margin-right: 2px; }
 .route a { font-size: .82rem; font-weight: 600; }
 
+/* ---------- 세부 별점 (0.5점 단위) ---------- */
+.rate-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rate-row { display: flex; align-items: center; gap: 10px; }
+.rate-lbl { width: 48px; flex: none; font-size: .85rem; font-weight: 600; }
+.rate-val { font-variant-numeric: tabular-nums; font-weight: 700; font-size: .9rem; min-width: 28px; }
+.rate-step { display: inline-flex; align-items: center; gap: 6px; }
+.rate-step .icon-btn { width: 30px; height: 30px; font-size: 1rem; }
+.rate-row.big .rate-val { font-size: 1.25rem; min-width: 36px; text-align: center; }
+.rate-detail { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--surface-2); border-radius: 10px; }
+.hstars { display: inline-flex; gap: 2px; touch-action: manipulation; cursor: pointer; user-select: none; }
+.hstars .s { position: relative; display: inline-block; font-size: 1.6rem; line-height: 1; color: var(--line); }
+.rate-row.big .hstars .s { font-size: 2.2rem; }
+.hstars .s i { position: absolute; inset: 0 auto 0 0; overflow: hidden; color: var(--star); font-style: normal; white-space: nowrap; }
+.hstars:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.crit-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 14px; }
+.crit { display: grid; grid-template-columns: 44px 1fr 30px; align-items: center; gap: 6px; font-size: .82rem; }
+.crit .bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.crit .bar i { display: block; height: 100%; background: var(--star); }
+.crit b { font-variant-numeric: tabular-nums; text-align: right; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { font-size: .72rem; background: var(--surface-2); border-radius: 6px; padding: 1px 7px; font-variant-numeric: tabular-nums; }
+
+/* ---------- 대화방 사진 / 벌금 ---------- */
+.photo-btn { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); cursor: pointer; color: var(--accent); }
+.photo-btn svg { width: 22px; height: 22px; fill: currentColor; }
+.bubble.photo { padding: 4px; background: var(--surface); }
+.msg.me .bubble.photo { background: var(--bubble-me); }
+.bubble.photo img { display: block; max-width: 220px; max-height: 260px; border-radius: 12px; cursor: zoom-in; }
+.bubble.photo .cap { padding: 4px 8px 2px; }
+.fine-tag { font-size: .68rem; font-weight: 700; color: var(--no); background: var(--no-soft); border-radius: 6px; padding: 1px 6px; flex: none; }
+.photo-fig { margin: 0; max-width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.photo-fig img { max-width: 100%; max-height: 78vh; border-radius: 12px; background: var(--surface); }
+.photo-fig figcaption { color: #fff; }
+.fine-list { display: flex; flex-direction: column; gap: 6px; }
+.fine-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.fine-row .amt { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--no); }
+.fine-row .amt.zero { color: var(--muted); font-weight: 500; }
+
 /* ---------- 토스트 ---------- */
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);

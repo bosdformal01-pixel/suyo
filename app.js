@@ -99,7 +99,8 @@ const S = {
   invites: [],
   notices: [], allYes: [], routes: {},
   settle: null, paid: {},
-  selected: null, myStars: 0,
+  selected: null,
+  club: {}, fines: [],
   tab: "home",
   lastPw: null, // 방금 로그인할 때 쓴 비밀번호 (비밀번호 변경 창에서 다시 묻지 않으려고 메모리에만 보관)
 };
@@ -350,6 +351,16 @@ function startApp() {
     renderHistory();
   }));
 
+  unsubs.push(onSnapshot(doc(db, "settings", "club"), (d) => {
+    S.club = d.exists() ? d.data() : {};
+    renderSettle(); renderFines();
+  }, (err) => console.error(err)));
+
+  unsubs.push(onSnapshot(collection(db, "fines"), (qs) => {
+    S.fines = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
+    renderFines(); renderChat();
+  }, (err) => console.error(err)));
+
   unsubs.push(onSnapshot(query(collection(db, "notices"), orderBy("createdAt", "desc"), limit(5)), (qs) => {
     S.notices = qs.docs.map((d) => ({ id: d.id, ...d.data(SNAP) }));
     renderNotices();
@@ -474,6 +485,7 @@ function showPage(p) {
   $$("#settings .sheet-page").forEach((el) => (el.hidden = el.dataset.page !== p));
   if (p === "invites") startInvites();
   if (p === "members") renderMembers();
+  if (p === "club") fillClubForm();
 }
 $("#me-btn").addEventListener("click", openSheet);
 $("#settings").addEventListener("click", (e) => {
@@ -488,7 +500,9 @@ $("#set-logout").addEventListener("click", async () => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
-  if (!$("#history").hidden) $("#history").hidden = true;
+  if (!$("#photo-view").hidden) $("#photo-view").hidden = true;
+  else if (!$("#install-modal").hidden) $("#install-modal").hidden = true;
+  else if (!$("#history").hidden) $("#history").hidden = true;
   else if (!$("#cal").hidden) closeCal();
   else if (!$("#settings").hidden) closeSheet();
   else if (!$("#pw-modal").hidden && !$("#pw-cancel").hidden) $("#pw-modal").hidden = true;
@@ -674,7 +688,7 @@ function renderHome() {
   // 최근 대화
   const last = S.messages.slice(-3);
   $("#home-chat").innerHTML = last.length
-    ? last.map((m) => `<button class="mini-item" data-goto="chat"><span class="t"><b>${esc(memberName(m.uid, m.name))}</b> ${esc(m.text)}</span><span class="small muted">${ago(toDate(m.createdAt))}</span></button>`).join("")
+    ? last.map((m) => `<button class="mini-item" data-goto="chat"><span class="t"><b>${esc(memberName(m.uid, m.name))}</b> ${m.img ? "(사진) " : ""}${esc(m.text)}</span><span class="small muted">${ago(toDate(m.createdAt))}</span></button>`).join("")
     : '<div class="empty-note">아직 대화가 없어요. 첫 메시지를 남겨 보세요.</div>';
 }
 
@@ -951,9 +965,11 @@ function updateChatBadge() {
 function nearBottom() { return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
 function scrollChatBottom() { requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight)); }
 
+const SAFE_IMG = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/;
 function renderChat() {
   const stick = S.tab === "chat" && nearBottom();
   let lastDay = "", lastUid = "";
+  const fm = finesByMsg();
   $("#chat-list").innerHTML = S.messages.length
     ? S.messages.map((m) => {
         const d = toDate(m.createdAt) || new Date();
@@ -965,7 +981,9 @@ function renderChat() {
         const t = S.members[m.uid]?.title;
         out += `<div class="msg ${me ? "me" : ""}" data-id="${m.id}">
             ${!me && lastUid !== m.uid ? `<span class="who">${esc(memberName(m.uid, m.name))}${t ? ` · ${esc(t)}` : ""}</span>` : ""}
-            <div class="line"><div class="bubble">${esc(m.text)}</div><span class="time">${hhmm(d)}</span>
+            <div class="line">${m.img && SAFE_IMG.test(m.img.thumb || "")
+                ? `<div class="bubble photo"><img src="${esc(m.img.thumb)}" alt="사진" data-photo="${esc(m.id)}" loading="lazy">${m.text ? `<div class="cap">${esc(m.text)}</div>` : ""}</div>`
+                : `<div class="bubble">${esc(m.text)}</div>`}<span class="time">${hhmm(d)}</span>${fm[m.id] ? `<span class="fine-tag">벌금 ${won(fm[m.id])}</span>` : ""}
               ${canDel || isOfficer() ? `<span class="acts" hidden>
                 ${isOfficer() ? `<button class="pin" data-pinmsg="${m.id}">공지로</button>` : ""}
                 ${canDel ? `<button class="del" data-delmsg="${m.id}">삭제</button>` : ""}
@@ -980,15 +998,21 @@ function renderChat() {
 }
 
 $("#chat-list").addEventListener("click", async (e) => {
+  const ph = e.target.closest("[data-photo]");
+  if (ph) { openPhoto(ph.dataset.photo); return; }
   const del = e.target.closest("[data-delmsg]");
   if (del) {
-    try { await deleteDoc(doc(db, "messages", del.dataset.delmsg)); } catch (err) { toast(errMsg(err)); }
+    const m = S.messages.find((x) => x.id === del.dataset.delmsg);
+    try {
+      await deleteDoc(doc(db, "messages", del.dataset.delmsg));
+      if (m?.img?.id) await deleteDoc(doc(db, "chatImages", m.img.id)).catch(() => {});
+    } catch (err) { toast(errMsg(err)); }
     return;
   }
   const pin = e.target.closest("[data-pinmsg]");
   if (pin) {
     const m = S.messages.find((x) => x.id === pin.dataset.pinmsg);
-    if (m) await addNotice(m.text.slice(0, 300));
+    if (m) await addNotice((m.text || "(사진)").slice(0, 300));
     return;
   }
   const msg = e.target.closest(".msg");
@@ -1039,6 +1063,181 @@ $("#notice-list").addEventListener("click", async (e) => {
 });
 
 // ============================================================
+//  동아리 설정 (정산 계좌 · 욕설 벌금) — Firestore settings/club, 멤버만 읽기 / 회장만 쓰기
+// ============================================================
+const DEFAULT_BAD_WORDS = [
+  "시발", "씨발", "씨바", "씨팔", "시팔", "ㅅㅂ", "ㅆㅂ", "ㅅ1ㅂ", "병신", "븅신", "ㅂㅅ", "좆", "존나", "졸라", "ㅈㄴ",
+  "개새끼", "개새", "새끼", "ㅅㄲ", "지랄", "ㅈㄹ", "닥쳐", "꺼져", "미친놈", "미친년", "썅", "니애미", "느금",
+  "fuck", "shit", "bitch",
+];
+const fineAmount = () => (Number.isFinite(Number(S.club.fineAmount)) && S.club.fineAmount !== undefined ? Number(S.club.fineAmount) : 100);
+const badWords = () => (Array.isArray(S.club.badWords) && S.club.badWords.length ? S.club.badWords : DEFAULT_BAD_WORDS);
+function accountText() {
+  const c = S.club;
+  return [c.bankName, c.accountNo, c.accountHolder ? `(${c.accountHolder})` : ""].filter(Boolean).join(" ");
+}
+function accountHtml() {
+  if (!S.club.accountNo) return '<div class="settle-memo"><span class="muted">보낼 계좌가 아직 없어요. 회장이 설정 → 동아리 설정에서 정해요.</span></div>';
+  return `<div class="settle-memo"><span>보낼 곳: <b>${esc(accountText())}</b></span><button class="btn ghost sm" type="button" data-copy-acct>계좌 복사</button></div>`;
+}
+async function copyAccount() {
+  const no = String(S.club.accountNo || "");
+  try { await navigator.clipboard.writeText(`${S.club.bankName || ""} ${no}`.trim()); toast("계좌를 복사했어요"); }
+  catch { toast(`복사가 안 돼요: ${S.club.bankName || ""} ${no}`); }
+}
+document.addEventListener("click", (e) => { if (e.target.closest("[data-copy-acct]") && !e.target.closest("#settle-view")) copyAccount(); });
+
+function fillClubForm() {
+  const c = S.club;
+  $("#club-bank").value = c.bankName || "";
+  $("#club-acct").value = c.accountNo || "";
+  $("#club-holder").value = c.accountHolder || "";
+  $("#club-fine").value = fineAmount();
+  $("#club-words").value = badWords().join(", ");
+}
+$("#club-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const words = [...new Set($("#club-words").value.split(/[,\n]/).map((w) => w.trim()).filter(Boolean))].slice(0, 200);
+  try {
+    await setDoc(doc(db, "settings", "club"), {
+      bankName: $("#club-bank").value.trim(),
+      accountNo: $("#club-acct").value.trim(),
+      accountHolder: $("#club-holder").value.trim(),
+      fineAmount: Math.max(0, Math.round(Number($("#club-fine").value) || 0)),
+      badWords: words,
+      updatedBy: S.uid, updatedAt: serverTimestamp(),
+    });
+    toast("동아리 설정을 저장했어요");
+    showPage("main");
+  } catch (err) { toast(errMsg(err)); }
+});
+
+// ============================================================
+//  욕설 벌금 — 보낸 사람 화면에서 금지어를 세서 자동 기록 (1건당 동아리 설정 금액)
+// ============================================================
+function countBadWords(text) {
+  const compact = text.toLowerCase().replace(/[\s\d.,!?~^*_\-+=|\\/'"`:;()[\]{}<>@#$%&]+/g, "");
+  let n = 0;
+  for (const w of badWords()) {
+    const ww = w.toLowerCase().replace(/\s+/g, "");
+    if (!ww) continue;
+    let i = 0;
+    while ((i = compact.indexOf(ww, i)) !== -1) { n++; i += ww.length; }
+  }
+  return Math.min(n, 20);
+}
+function finesByMsg() {
+  const m = {};
+  S.fines.forEach((f) => { if (f.msgId) m[f.msgId] = (m[f.msgId] || 0) + f.amount; });
+  return m;
+}
+function renderFines() {
+  if (!S.me) return;
+  const per = {};
+  S.fines.forEach((f) => {
+    const x = (per[f.uid] ||= { unpaid: 0, paid: 0, count: 0 });
+    x.count += f.count || 1;
+    if (f.paid) x.paid += f.amount; else x.unpaid += f.amount;
+  });
+  const unpaidTotal = Object.values(per).reduce((a, x) => a + x.unpaid, 0);
+  const paidTotal = Object.values(per).reduce((a, x) => a + x.paid, 0);
+  $("#fine-rule").textContent = `1건당 ${won(fineAmount())}`;
+  $("#fine-total").textContent = S.fines.length ? `· 걷힌 돈 ${won(paidTotal)}` : "";
+  const rows = Object.entries(per).sort((a, b) => b[1].unpaid - a[1].unpaid || b[1].count - a[1].count);
+  $("#fine-view").innerHTML = rows.length
+    ? `<div class="fine-list">${rows.map(([u, x]) => `
+        <div class="fine-row"><span>${esc(memberName(u))} <span class="muted small">${x.count}건</span></span>
+          <span class="row"><span class="amt ${x.unpaid ? "" : "zero"}">${x.unpaid ? `${won(x.unpaid)} 낼 차례` : "다 냄"}</span>
+          ${isOfficer() && x.unpaid ? `<button class="btn ghost sm" type="button" data-fine-paid="${u}">납부 확인</button>` : ""}</span></div>`).join("")}</div>
+       <div class="muted small">아직 안 낸 벌금 합계 ${won(unpaidTotal)}</div>${unpaidTotal ? accountHtml() : ""}`
+    : '<div class="empty-note">아직 벌금이 없어요. 대화방에서 욕을 쓰면 1건마다 자동으로 기록돼요.</div>';
+}
+$("#fine-view").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-fine-paid]");
+  if (!b) return;
+  const u = b.dataset.finePaid;
+  b.disabled = true;
+  try {
+    const batch = writeBatch(db);
+    S.fines.filter((f) => f.uid === u && !f.paid).forEach((f) => batch.update(doc(db, "fines", f.id), { paid: true, paidBy: S.uid, paidAt: serverTimestamp() }));
+    await batch.commit();
+    toast(`${memberName(u)} 님 벌금 납부를 확인했어요`);
+  } catch (err) { b.disabled = false; toast(errMsg(err)); }
+});
+
+// ============================================================
+//  대화방 사진 — 폰에서 작게 줄인 뒤 Firestore에 저장 (무료 요금제용)
+//  큰 사진은 chatImages 문서에, 대화에는 작은 미리보기만 넣어요.
+// ============================================================
+function loadImage(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("이미지를 열 수 없어요")); };
+    img.src = url;
+  });
+}
+function shrink(img, maxSide, quality, maxChars) {
+  let side = maxSide, q = quality, out = "";
+  for (let i = 0; i < 6; i++) {
+    const k = Math.min(1, side / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const ctx = c.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+    out = c.toDataURL("image/jpeg", q);
+    if (out.length <= maxChars) return { data: out, w, h };
+    side = Math.round(side * 0.8); q = Math.max(0.4, q - 0.1);
+  }
+  return { data: out.length <= maxChars ? out : "", w: 0, h: 0 };
+}
+$("#chat-photo").addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = "";
+  if (!file) return;
+  if (!file.type.startsWith("image/")) { toast("사진 파일만 보낼 수 있어요"); return; }
+  toast("사진 줄이는 중…");
+  try {
+    const img = await loadImage(file);
+    const full = shrink(img, 1280, 0.72, 850000);
+    const thumb = shrink(img, 360, 0.6, 45000);
+    if (!full.data || !thumb.data) { toast("사진이 너무 커요. 다른 사진으로 해 주세요."); return; }
+    const imgRef = await addDoc(collection(db, "chatImages"), { uid: S.uid, data: full.data, at: serverTimestamp() });
+    const caption = chatInput.value.trim();
+    chatInput.value = ""; chatInput.style.height = "auto";
+    const msgRef = await addDoc(collection(db, "messages"), {
+      uid: S.uid, name: S.me.name, text: caption, img: { id: imgRef.id, thumb: thumb.data, w: thumb.w, h: thumb.h }, createdAt: serverTimestamp(),
+    });
+    await recordFine(caption, msgRef.id);
+    scrollChatBottom();
+  } catch (err) { toast(err?.code ? errMsg(err) : "사진을 보내지 못했어요"); }
+});
+async function openPhoto(msgId) {
+  const m = S.messages.find((x) => x.id === msgId);
+  if (!m?.img) return;
+  $("#photo-img").src = SAFE_IMG.test(m.img.thumb || "") ? m.img.thumb : "";
+  $("#photo-cap").textContent = `${memberName(m.uid, m.name)} · ${hhmm(toDate(m.createdAt))}`;
+  $("#photo-view").hidden = false;
+  try {
+    const d = await getDoc(doc(db, "chatImages", m.img.id));
+    if (d.exists() && SAFE_IMG.test(d.data().data || "")) $("#photo-img").src = d.data().data;
+  } catch (e) { console.error(e); }
+}
+$("#photo-view").addEventListener("click", (e) => {
+  if (e.target === e.currentTarget || e.target.closest("[data-close-photo]")) $("#photo-view").hidden = true;
+});
+async function recordFine(text, msgId) {
+  const n = countBadWords(text || "");
+  if (!n || !fineAmount()) return;
+  try {
+    await addDoc(collection(db, "fines"), {
+      uid: S.uid, name: S.me.name, count: n, amount: n * fineAmount(), msgId, paid: false, at: serverTimestamp(),
+    });
+    toast(`욕설 ${n}건 감지! 벌금 ${won(n * fineAmount())}이 기록됐어요`);
+  } catch (e) { console.error(e); }
+}
+
+// ============================================================
 //  N빵 정산 (이번 주 모임 기준)
 // ============================================================
 const won = (n) => Number(n || 0).toLocaleString("ko-KR") + "원";
@@ -1064,7 +1263,7 @@ function renderSettle() {
     <div class="settle-sum"><span class="big">${won(each)}</span><span class="muted small">1인당 · 총 ${won(st.total)} ÷ ${people.length}명</span></div>
     <div class="muted small">${esc(memberName(st.payer, st.payerName))} 님이 먼저 계산했어요 · ${done}/${people.length}명 완료</div>
     <div class="progress" aria-hidden="true"><i style="width:${pct}%"></i></div>
-    ${st.memo ? `<div class="settle-memo"><span>보낼 곳: ${esc(st.memo)}</span><button class="btn ghost sm" type="button" id="settle-copy">복사</button></div>` : ""}
+    ${accountHtml()}
     <div class="pay-list">
       ${people.map((u) => {
         const isPayer = u === st.payer;
@@ -1083,7 +1282,7 @@ function openSettleForm() {
   $("#settle-total").value = st?.total ?? "";
   $("#settle-payer").innerHTML = ids.map((u) => `<option value="${u}" ${(st?.payer || S.uid) === u ? "selected" : ""}>${esc(memberName(u))}</option>`).join("");
   $("#settle-people").innerHTML = ids.map((u) => `<label class="chk"><input type="checkbox" value="${u}" ${chosen.has(u) ? "checked" : ""}> ${esc(memberName(u))}</label>`).join("");
-  $("#settle-memo").value = st?.memo || "";
+  $("#settle-account-note").textContent = S.club.accountNo ? `보낼 곳: ${accountText()} (동아리 설정에 고정)` : "보낼 계좌는 회장이 '동아리 설정'에서 정해요.";
   $("#settle-delete").hidden = !st;
   $("#settle-form").hidden = false;
   $("#settle-view").hidden = true;
@@ -1113,7 +1312,7 @@ $("#settle-form").addEventListener("submit", async (e) => {
   const payer = $("#settle-payer").value;
   try {
     await setDoc(doc(db, "settlements", S.wedKey), {
-      total, payer, payerName: memberName(payer), participants, memo: $("#settle-memo").value.trim(),
+      total, payer, payerName: memberName(payer), participants, memo: "",
       updatedBy: S.uid, updatedAt: serverTimestamp(),
     });
     closeSettleForm();
@@ -1135,10 +1334,7 @@ $("#settle-delete").addEventListener("click", async (e) => {
   } catch (err) { toast(errMsg(err)); }
 });
 $("#settle-view").addEventListener("click", async (e) => {
-  if (e.target.closest("#settle-copy")) {
-    try { await navigator.clipboard.writeText(S.settle.memo); toast("복사했어요"); } catch { toast("복사가 안 돼요. 길게 눌러 직접 복사해 주세요."); }
-    return;
-  }
+  if (e.target.closest("[data-copy-acct]")) { copyAccount(); return; }
   const b = e.target.closest("[data-pay]");
   if (!b || b.disabled) return;
   const u = b.dataset.pay;
@@ -1215,8 +1411,9 @@ $("#chat-form").addEventListener("submit", async (e) => {
   if (!text) return;
   chatInput.value = ""; chatInput.style.height = "auto";
   try {
-    await addDoc(collection(db, "messages"), { uid: S.uid, name: S.me.name, text, createdAt: serverTimestamp() });
+    const ref = await addDoc(collection(db, "messages"), { uid: S.uid, name: S.me.name, text, createdAt: serverTimestamp() });
     scrollChatBottom();
+    await recordFine(text, ref.id);
   } catch (err) { chatInput.value = text; toast(errMsg(err)); }
 });
 
@@ -1292,9 +1489,10 @@ function syncMarkers() {
 
 function stats(placeId) {
   const rs = S.reviews.filter((r) => r.placeId === placeId);
-  const avg = rs.length ? rs.reduce((a, r) => a + r.stars, 0) / rs.length : 0;
+  const avg = rs.length ? rs.reduce((a, r) => a + Number(r.stars || 0), 0) / rs.length : 0;
   return { rs, avg, count: rs.length, mine: rs.find((r) => r.uid === S.uid) };
 }
+const fmt1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
 function starsHtml(avg) {
   return `<span class="stars" aria-label="5점 만점에 ${avg.toFixed(1)}점">★★★★★<span class="fill" style="width:${(avg / 5) * 100}%">★★★★★</span></span>`;
 }
@@ -1598,9 +1796,9 @@ $("#search-results").addEventListener("click", async (e) => {
 function selectPlace(id, pan) {
   S.selected = id;
   const mine = stats(id).mine;
-  S.myStars = mine?.stars || 0;
+  S.myRate = { overall: Number(mine?.stars || 0) };
   $("#review-text").value = mine?.text || "";
-  paintStars();
+  paintRates();
   renderPlaces();
   const p = S.places.find((x) => x.id === id);
   if (p && map && pan) { map.panTo(new kakaoMaps.LatLng(p.lat, p.lng)); }
@@ -1615,7 +1813,7 @@ function renderDetail() {
   $("#pd-name").textContent = p.name;
   $("#pd-meta").textContent = [p.category, p.address, p.phone].filter(Boolean).join(" · ");
   $("#pd-summary").innerHTML = count
-    ? `<span class="big">${avg.toFixed(1)}</span>${starsHtml(avg)}<span class="muted small">${count}명 평가</span>`
+    ? `<span class="big">${fmt1(avg)}</span>${starsHtml(avg)}<span class="muted small">${count}명 평가</span>`
     : '<span class="muted">아직 평점이 없어요. 첫 평점을 남겨 주세요!</span>';
   $("#pd-route-info").innerHTML = routeHtml(p);
   ensureBus(p);
@@ -1625,20 +1823,58 @@ function renderDetail() {
   $("#review-delete").hidden = !mine;
   $("#pd-reviews").innerHTML = rs
     .sort((a, b) => (toDate(b.at)?.getTime() || 0) - (toDate(a.at)?.getTime() || 0))
-    .map((r) => `<div class="review"><div class="hd"><b>${esc(memberName(r.uid, r.name))}</b>${starsHtml(r.stars)}<span class="muted small">${ago(toDate(r.at))}</span></div>${r.text ? `<p>${esc(r.text)}</p>` : ""}</div>`)
+    .map((r) => {
+      return `<div class="review"><div class="hd"><b>${esc(memberName(r.uid, r.name))}</b>${starsHtml(Number(r.stars))}<b>${fmt1(Number(r.stars))}</b><span class="muted small">${ago(toDate(r.at))}</span></div>${r.text ? `<p>${esc(r.text)}</p>` : ""}</div>`;
+    })
     .join("");
 }
 $("#pd-close").addEventListener("click", () => { S.selected = null; $("#place-detail").hidden = true; renderPlaces(); });
 
-function paintStars() { $$("#star-input button").forEach((b) => b.classList.toggle("on", Number(b.dataset.v) <= S.myStars)); }
-$$("#star-input button").forEach((b) => b.addEventListener("click", () => { S.myStars = Number(b.dataset.v); paintStars(); }));
+// 별점: 별을 눌러 0.5점 단위로 고르고, −/+ 로 0.1점씩 조절
+S.myRate = { overall: 0 };
+const clampRate = (v) => Math.max(0, Math.min(5, Math.round(v * 10) / 10));
+$$(".hstars").forEach((el) => {
+  el.innerHTML = [1, 2, 3, 4, 5].map((n) => `<span class="s" data-n="${n}">★<i>★</i></span>`).join("");
+  el.addEventListener("click", (e) => {
+    const s = e.target.closest(".s");
+    if (!s) return;
+    const r = s.getBoundingClientRect();
+    S.myRate[el.dataset.key] = Number(s.dataset.n) - (e.clientX - r.left < r.width / 2 ? 0.5 : 0);
+    paintRates();
+  });
+  el.addEventListener("keydown", (e) => {
+    const k = el.dataset.key, cur = S.myRate[k] || 0;
+    if (e.key === "ArrowRight" || e.key === "ArrowUp") S.myRate[k] = clampRate(cur + 0.1);
+    else if (e.key === "ArrowLeft" || e.key === "ArrowDown") S.myRate[k] = clampRate(cur - 0.1);
+    else return;
+    e.preventDefault(); paintRates();
+  });
+});
+$$("[data-step]").forEach((b) => b.addEventListener("click", () => {
+  S.myRate.overall = clampRate((S.myRate.overall || 0) + Number(b.dataset.step));
+  paintRates();
+}));
+function paintRates() {
+  $$(".hstars").forEach((el) => {
+    const v = S.myRate[el.dataset.key] || 0;
+    el.setAttribute("aria-valuenow", String(v));
+    el.querySelectorAll(".s").forEach((s) => {
+      const n = Number(s.dataset.n);
+      s.querySelector("i").style.width = `${Math.max(0, Math.min(1, v - (n - 1))) * 100}%`;
+    });
+    const lbl = document.querySelector(`[data-val-for="${el.dataset.key}"]`);
+    if (lbl) lbl.textContent = v ? fmt1(v) : "-";
+  });
+}
+paintRates();
 
 $("#review-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  if (!S.myStars) { toast("별을 눌러 평점을 골라 주세요"); return; }
+  if (!S.myRate.overall) { toast("별을 눌러 별점을 골라 주세요"); return; }
   try {
     await setDoc(doc(db, "reviews", `${S.selected}_${S.uid}`), {
-      placeId: S.selected, uid: S.uid, name: S.me.name, stars: S.myStars, text: $("#review-text").value.trim(), at: serverTimestamp(),
+      placeId: S.selected, uid: S.uid, name: S.me.name, stars: S.myRate.overall,
+      text: $("#review-text").value.trim(), at: serverTimestamp(),
     });
     toast("평점을 저장했어요");
   } catch (err) { toast(errMsg(err)); }
@@ -1646,7 +1882,7 @@ $("#review-form").addEventListener("submit", async (e) => {
 $("#review-delete").addEventListener("click", async () => {
   try {
     await deleteDoc(doc(db, "reviews", `${S.selected}_${S.uid}`));
-    S.myStars = 0; $("#review-text").value = ""; paintStars();
+    S.myRate = { overall: 0 }; $("#review-text").value = ""; paintRates();
     toast("내 평점을 지웠어요");
   } catch (err) { toast(errMsg(err)); }
 });
@@ -1674,3 +1910,35 @@ $("#pd-delete").addEventListener("click", async (e) => {
     toast("맛집을 삭제했어요");
   } catch (err) { toast(errMsg(err)); }
 });
+
+// ============================================================
+//  앱으로 설치 (PWA) — 안드로이드 크롬은 설치 버튼, 아이폰은 '홈 화면에 추가' 안내
+// ============================================================
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch((e) => console.warn("sw", e)));
+}
+let installPrompt = null;
+window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installPrompt = e; });
+window.addEventListener("appinstalled", () => { installPrompt = null; toast("수요미식회 앱을 설치했어요!"); });
+const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+$("#set-install").addEventListener("click", async () => {
+  closeSheet();
+  if (isStandalone()) { toast("이미 앱으로 열려 있어요"); return; }
+  if (installPrompt) {
+    installPrompt.prompt();
+    const r = await installPrompt.userChoice.catch(() => null);
+    installPrompt = null;
+    if (r?.outcome === "accepted") return;
+  }
+  const ua = navigator.userAgent;
+  const ios = /iphone|ipad|ipod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const inApp = /instagram|fban|fbav|kakaotalk|naver|line\//i.test(ua);
+  const steps = inApp
+    ? ["지금은 인스타·카톡 같은 앱 안의 브라우저라 설치가 안 돼요.", "오른쪽 위 ⋯ 메뉴에서 <b>다른 브라우저로 열기</b>(크롬/사파리)를 눌러 주세요.", "그다음 다시 이 버튼을 눌러요."]
+    : ios
+      ? ["<b>사파리</b>로 이 사이트를 열어요.", "아래(또는 위) <b>공유 버튼</b>(네모에 화살표)을 눌러요.", "<b>홈 화면에 추가</b> → <b>추가</b>를 누르면 끝!"]
+      : ["<b>크롬</b>으로 이 사이트를 열어요.", "오른쪽 위 <b>⋮</b> 메뉴를 눌러요.", "<b>앱 설치</b> 또는 <b>홈 화면에 추가</b>를 누르면 끝!"];
+  $("#inst-body").innerHTML = `<ol class="route-steps">${steps.map((t) => `<li>${t}</li>`).join("")}</ol><p class="muted">설치하면 홈 화면에 水 아이콘이 생기고, 주소창 없이 앱처럼 열려요.</p>`;
+  $("#install-modal").hidden = false;
+});
+$("#inst-close").addEventListener("click", () => ($("#install-modal").hidden = true));
