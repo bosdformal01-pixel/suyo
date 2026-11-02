@@ -185,7 +185,7 @@ function render() {
         <div class="blind-actions"><button class="btn primary" type="button" data-blind="submit">${iVoted ? "다시 내기" : "몰래 내기"}</button>${iVoted ? '<button class="btn ghost" type="button" data-blind="cancel">취소</button>' : ""}${isOfficer() && !iVoted ? revealBtn() : ""}</div>`;
     }
     const yesN = S.yes.length;
-    body += `<p class="muted small blind-foot">${yesN ? `참석한 ${yesN}명이 다 내면 한 번에 공개돼요.` : "참석 표시한 사람이 없어서 회장·임원이 열어야 공개돼요."} 그 전엔 누가 몇 점 줬는지 아무도 못 봐요.</p>`;
+    body += `<p class="muted small blind-foot">${yesN >= 2 ? `참석한 ${yesN}명이 다 내면 한 번에 공개돼요.` : "참석 표시한 사람이 2명보다 적어서 회장·임원이 '지금 공개'를 눌러야 열려요."} 그 전엔 누가 몇 점 줬는지 아무도 못 봐요.</p>`;
   }
 
   const html = `<header class="group-head"><h3>🙈 블라인드 평점</h3><span class="muted small">${revealed ? "공개됨" : `${nVoted}/${ppl.length || 0}명 냈어요`}</span></header>
